@@ -1,0 +1,840 @@
+---
+title: "QTL Relation Previous Studies"
+author: Linda Dieckmann
+date: December 2022
+output: github_document
+---
+
+In this notebook we consider previous studies in relation to our QTLs.
+
+# load packages
+```{r, warning=FALSE}
+library(here)
+library(readxl)
+library(stringi)
+library(VennDiagram)
+library(gridExtra)
+```
+
+If you update package(s) call 
+  renv::snapshot() 
+to save the current picture of the project.
+
+```{r}
+writeLines(capture.output(sessionInfo()), here("Analyses/Scripts/sessionInfos/", "sessionInfo_Script_3_6.txt"))
+```
+
+```{r}
+source(here("Analyses/Scripts/", "functions.R"))
+```
+
+# load data
+## own QTL data (final)
+```{r}
+load(here("02_Data/QTL_Data/", "bme_eqtl_cvs_clumped.Rdata"))
+load(here("02_Data/QTL_Data/", "bme_eqtl_placenta_clumped.Rdata"))
+load(here("02_Data/QTL_Data/", "bme_meqtl_cvs_clumped.Rdata"))
+load(here("02_Data/QTL_Data/", "bme_meqtl_placenta_clumped.Rdata"))
+load(here("02_Data/MatrixEQTL_Output", "bme_eqtm_placenta.Rdata"))
+load(here("02_Data/MatrixEQTL_Output", "bme_eqtm_cvs.Rdata"))
+```
+
+## annotations
+```{r}
+load(here("02_Data/prepared/", "annotation_genes_placenta_rna.Rdata"))
+load(here("02_Data/prepared/", "annotation_genes_cvs_rna.Rdata"))
+load(here("02_Data/prepared/", "annotation_placenta_meth.Rdata"))
+load(here("02_Data/prepared/", "annotation_cvs_meth.Rdata"))
+```
+
+
+## external data
+### eQTLs
+
+```{r}
+# prepared, hg (Kikas et al. was hg38 and needed an update to hg19 via knowing)
+eQTL_data_delahaye <- read.table(here("02_Data/external_resources/Delahaye_2018/", "Delahaye_eQTL_S5.txt"), header = T)
+eQTL_data_kikas <- read.table(here("02_Data/external_resources/Kikas_2019/", "Kikas_Table_1_cis_eQTLs.txt.positions.hg38.hg19.txt"), header = T)
+eQTL_data_peng <- read.table(here("02_Data/external_resources/Peng_2017/", "Peng_Table.S1A.Placenta.10pct.FDR.cis.eQTL.chrPosSplit.txt"), header = T, sep = "\t")
+```
+
+```{r}
+delahaye_peng_overlap_report <- read_excel(here("02_Data/external_resources/Delahaye_2018", "S8_overlapPeng.xlsx"))
+delahaye_peng_overlap_report <- delahaye_peng_overlap_report[-1, ] # comes from reading in
+```
+
+```{r}
+unique_gene_names_eqtl_delahaye <- unique(eQTL_data_delahaye$gene_name) # 985 not unique
+unique_gene_names_eqtl_kikas <- unique(eQTL_data_kikas$Gene.ID) # 199 not unique
+unique_gene_names_eqtl_peng <- unique(eQTL_data_peng$Gene) # 3218 
+
+length(unique_gene_names_eqtl_delahaye)
+length(unique_gene_names_eqtl_kikas)
+length(unique_gene_names_eqtl_peng)
+```
+
+## preparing data
+
+### eQTLs (genes) external
+
+In Peng table, genes with a "-" mark in the name, the "-" symbol has been removed (i.e. HLA-A vs HLAA), however in Delahaye table and Kikas table, the genes still have the "-" symbol in gene names.
+Thus, we adapt the names in Kikas and Delahaye:
+```{r}
+unique_gene_names_eqtl_delahaye <- gsub("-", "", unique_gene_names_eqtl_delahaye)
+eQTL_data_delahaye$gene_name <- gsub("-", "",eQTL_data_delahaye$gene_name)
+
+unique_gene_names_eqtl_kikas <- gsub("-", "", unique_gene_names_eqtl_kikas)
+eQTL_data_kikas$Gene.ID <- gsub("-", "",eQTL_data_kikas$Gene.ID)
+```
+From those 5 are overlapped with Delahaye list (HLA-C, HLA-DQB1, HLA-DRB1, HLA-DRB5, HLA-DRB6).
+
+In Kikas, ALPG was changed to ALPPL2 (had been changed in ensembl just before they published, thus they used the new gene name in the article), however for finding overlap need the previous one (as in Peng)
+```{r}
+unique_gene_names_eqtl_kikas <- gsub("ALPG", "ALPPL2", unique_gene_names_eqtl_kikas)
+eQTL_data_kikas$Gene.ID <- gsub("ALPG", "ALPPL2", eQTL_data_kikas$Gene.ID)
+```
+
+In Delahaye-Peng overlap Table is one gene that is not in the Delahaye gene table
+```{r}
+setdiff(delahaye_peng_overlap_report$`List of genes overlapping with Peng et al.`, intersect(unique_gene_names_eqtl_delahaye, unique_gene_names_eqtl_peng))
+```
+The SEPT2 gene is under the name of SEP2 in Delahaye results (possibly due to excel forcing it to sept.02 
+```{r}
+unique_gene_names_eqtl_delahaye <- gsub("SEP2", "SEPT2", unique_gene_names_eqtl_delahaye)
+eQTL_data_delahaye$gene_name <- gsub("SEP2", "SEPT2", eQTL_data_delahaye$gene_name)
+```
+
+"There are 50 genes overlapping between Kikas et al. - Peng et al. 
+and 385 genes overlapping between Delahaye et al. - Peng et al. (381 in Table S8 in Delahaye et al., small difference comes from the HLA locus genes that we included in the comparison but Delahaye did not)."
+
+```{r}
+length(intersect(unique_gene_names_eqtl_delahaye, unique_gene_names_eqtl_kikas)) # delahaye and kikas
+length(intersect(unique_gene_names_eqtl_kikas, unique_gene_names_eqtl_peng)) # kikas and peng
+length(intersect(unique_gene_names_eqtl_delahaye, unique_gene_names_eqtl_peng)) # delahye and peng
+```
+
+```{r}
+setdiff(intersect(unique_gene_names_eqtl_delahaye, unique_gene_names_eqtl_peng), delahaye_peng_overlap_report$`List of genes overlapping with Peng et al.`)
+```
+
+I save the data with the adapted names
+```{r}
+write.table(unique_gene_names_eqtl_delahaye, file=here("02_Data/previous_studies/", "unique_gene_names_eqtl_delahaye.txt"), row.names = F, col.names = F, quote = F)
+write.table(unique_gene_names_eqtl_kikas, file=here("02_Data/previous_studies/", "unique_gene_names_eqtl_kikas.txt"), row.names = F, col.names = F, quote = F)
+write.table(unique_gene_names_eqtl_peng, file=here("02_Data/previous_studies/", "unique_gene_names_eqtl_peng.txt"), row.names = F, col.names = F, quote = F)
+
+save(eQTL_data_delahaye, file=here("02_Data/previous_studies/", "eQTL_data_delahaye.Rdata"))
+save(eQTL_data_kikas, file=here("02_Data/previous_studies/", "eQTL_data_kikas.Rdata"))
+save(eQTL_data_peng, file=here("02_Data/previous_studies/", "eQTL_data_peng.Rdata"))
+```
+
+### eQTMs (genes) external
+```{r}
+eQTM_data_delahaye <- read_excel(here("02_Data/external_resources/Delahaye_2018", "eQTM_S20.xlsx"), col_names=T)
+```
+report 2,655 eQTM associations remained with 2,538 unique CpG sites and 1,269 genes 
+
+```{r}
+unique_cpg_names_eqtm_delahaye <- unique(eQTM_data_delahaye$CpG) 
+length(unique_cpg_names_eqtm_delahaye)
+```
+
+```{r}
+unique_gene_names_eqtm_delahaye <- unique(eQTM_data_delahaye$Gene) 
+unique_gene_names_eqtm_delahaye <- gsub("-", "", unique_gene_names_eqtm_delahaye)
+eQTM_data_delahaye$Gene <- gsub("-", "", eQTM_data_delahaye$Gene)
+length(unique_gene_names_eqtm_delahaye)
+```
+The SEPT2 gene is under the name of SEP2 in Delahaye results (possibly due to excel forcing it to sept.02 
+```{r}
+unique_gene_names_eqtm_delahaye <- gsub("SEP2", "SEPT2", unique_gene_names_eqtm_delahaye)
+eQTM_data_delahaye$Gene <- gsub("SEP2", "SEPT2", eQTM_data_delahaye$Gene)
+```
+
+I save the data with the adapted names
+```{r}
+write.table(unique_gene_names_eqtm_delahaye, file=here("02_Data/previous_studies/", "unique_gene_names_eqtm_delahaye.txt"), row.names = F, col.names = F, quote = F)
+save(eQTM_data_delahaye, file=here("02_Data/previous_studies/", "eQTM_data_delahaye.Rdata"))
+```
+
+### meQTLs (cpgs) external
+previous studies from Do et al. (2016) and Delahaye et al. (2018)
+both used 450K Array
+
+*Delahaye et al.*
+```{r}
+meQTL_data_delahaye <- read_excel(here("02_Data/external_resources/Delahaye_2018", "meQTL_S6.xlsx"), col_names=T, col_types = "text")
+```
+
+we need to adapt column types
+```{r}
+meQTL_data_delahaye[c("CpG_Distance", "MAF", "nominal_PV", "regression_slope", "adj_PV", "adj_PV_num", "FDR", "n_variant_tested", "score", "start", "stop", "snp_position")] <- sapply(meQTL_data_delahaye[c("CpG_Distance", "MAF", "nominal_PV", "regression_slope", "adj_PV", "adj_PV_num", "FDR", "n_variant_tested", "score", "start", "stop", "snp_position")],as.numeric)
+sapply(meQTL_data_delahaye, class)
+```
+report 4,342 mQTL associations 
+
+*Do et al.*
+```{r}
+meQTL_data_do <- read_excel(here("02_Data/external_resources/Do_2016", "Do_placenta_mQTLs.xlsx"), col_names=T) #GRCh37 assembly
+```
+found 866 placenta mQTLs 
+
+```{r}
+meQTL_delahaye_do_overlap_report <- read_excel(here("02_Data/external_resources/Delahaye_2018", "S9_overlapDo.xlsx"))
+length(unique(meQTL_delahaye_do_overlap_report$cpgID))
+```
+
+*save both*
+327 records, 319 unique CpGs
+
+```{r}
+unique_cpg_names_meqtl_delahaye <- unique(meQTL_data_delahaye$cpgID) 
+unique_cpg_names_meqtl_do <- unique(meQTL_data_do$`Illumina probe ID`) 
+
+length(unique_cpg_names_meqtl_delahaye)
+length(unique_cpg_names_meqtl_do)
+```
+
+```{r}
+length(intersect(unique_cpg_names_meqtl_delahaye, unique_cpg_names_meqtl_do))
+```
+
+```{r}
+write.table(unique_cpg_names_meqtl_delahaye, file=here("02_Data/previous_studies/", "unique_cpg_names_meqtl_delahaye.txt"), row.names = F, col.names = F, quote = F)
+write.table(unique_cpg_names_meqtl_do, file=here("02_Data/previous_studies/", "unique_cpg_names_meqtl_do.txt"), row.names = F, col.names = F, quote = F)
+
+save(meQTL_data_delahaye,file=here("02_Data/previous_studies/", "meQTL_data_delahaye.Rdata"))
+save(meQTL_data_do, file=here("02_Data/previous_studies/", "meQTL_data_do.Rdata"))
+```
+
+### eQTLs own
+```{r}
+unique_genes_eqtl_placenta <- unique(bme_eqtl_placenta_clumped$eGene)
+unique_gene_names_eqtl_placenta <- annotation_genes_placenta_rna[annotation_genes_placenta_rna$ensembl_gene_id %in% unique_genes_eqtl_placenta, c("ensembl_gene_id", "hgnc_symbol")]
+```
+
+```{r}
+unique_genes_eqtl_cvs <- unique(bme_eqtl_cvs_clumped$eGene)
+unique_gene_names_eqtl_cvs <- annotation_genes_cvs_rna[annotation_genes_cvs_rna$ensembl_gene_id %in% unique_genes_eqtl_cvs, c("ensembl_gene_id", "hgnc_symbol")]
+```
+
+I also remove '-' in gene names of our data to make it concordant
+```{r}
+unique_gene_names_eqtl_placenta$hgnc_symbol <- gsub("-", "", unique_gene_names_eqtl_placenta$hgnc_symbol)
+unique_gene_names_eqtl_placenta_all$hgnc_symbol <- gsub("-", "", unique_gene_names_eqtl_placenta_all$hgnc_symbol)
+
+unique_gene_names_eqtl_cvs$hgnc_symbol <- gsub("-", "", unique_gene_names_eqtl_cvs$hgnc_symbol)
+```
+
+I save the data with the adapted names
+```{r}
+save(unique_gene_names_eqtl_placenta, file=here("02_Data/previous_studies/", "unique_gene_names_eqtl_placenta_boot_clumped.Rdata"))
+save(unique_gene_names_eqtl_cvs, file=here("02_Data/previous_studies/", "unique_gene_names_eqtl_cvs_boot_clumped.Rdata"))
+```
+
+### eQTMs own
+```{r}
+unique_genes_eqtm_placenta <- unique(bme_eqtm_placenta$eGene)
+unique_gene_names_eqtm_placenta <- annotation_genes_placenta_rna[annotation_genes_placenta_rna$ensembl_gene_id %in% unique_genes_eqtm_placenta, c("ensembl_gene_id", "hgnc_symbol")]
+```
+
+```{r}
+unique_genes_eqtm_cvs <- unique(bme_eqtm_cvs$eGene)
+unique_gene_names_eqtm_cvs <- annotation_genes_cvs_rna[annotation_genes_cvs_rna$ensembl_gene_id %in% unique_genes_eqtm_cvs, c("ensembl_gene_id", "hgnc_symbol")]
+```
+
+I also remove '-' in gene names of our data to make it concordant
+```{r}
+unique_gene_names_eqtm_placenta$hgnc_symbol <- gsub("-", "", unique_gene_names_eqtm_placenta$hgnc_symbol)
+unique_gene_names_eqtm_cvs$hgnc_symbol <- gsub("-", "", unique_gene_names_eqtm_cvs$hgnc_symbol)
+```
+
+I save the data with the adapted names
+```{r}
+save(unique_gene_names_eqtm_placenta, file=here("02_Data/previous_studies/", "unique_gene_names_eqtm_placenta_boot.Rdata"))
+save(unique_gene_names_eqtm_cvs, file=here("02_Data/previous_studies/", "unique_gene_names_eqtm_cvs_boot.Rdata"))
+```
+
+## meQTLs own
+```{r}
+unique_cpgs_meqtl_placenta <- unique(bme_meqtl_placenta_clumped$eGene)
+length(unique_cpgs_meqtl_placenta)
+unique_cpgs_meqtl_cvs <- unique(bme_meqtl_cvs_clumped$eGene)
+length(unique_cpgs_meqtl_cvs)
+```
+
+previous studes used 450K Array
+```{r}
+library(IlluminaHumanMethylation450kanno.ilmn12.hg19)
+meth450k <- getAnnotation(IlluminaHumanMethylation450kanno.ilmn12.hg19)
+```
+
+```{r}
+unique_cpgs_meqtl_placenta_in450k <- unique_cpgs_meqtl_placenta[unique_cpgs_meqtl_placenta %in% meth450k$Name]
+unique_cpgs_meqtl_cvs_in450k <- unique_cpgs_meqtl_cvs[unique_cpgs_meqtl_cvs %in% meth450k$Name]
+```
+
+```{r}
+cat("from our", length(unique_cpgs_meqtl_placenta), "placenta meQTL Cpgs", length(unique_cpgs_meqtl_placenta_in450k), "CpGs are among 450K Array CpGs")
+```
+
+I save the data 
+```{r}
+save(unique_cpgs_meqtl_placenta_in450k, file=here("02_Data/previous_studies/", "unique_cpgs_meqtl_placenta_in450k.Rdata"))
+save(unique_cpgs_meqtl_cvs_in450k, file=here("02_Data/previous_studies/", "unique_cpgs_meqtl_cvs_in450k.Rdata"))
+```
+
+#################################################################################
+```{r}
+rm(list = ls())
+```
+
+```{r}
+source(here("Analyses/Scripts/", "functions.R"))
+```
+
+# get prepared data
+
+## own QTL data full statistics tables
+
+```{r}
+load(here("Analyses/Results/Descriptive", "eQTLs_placenta_statistics.Rdata"))
+load(here("Analyses/Results/Descriptive", "meQTLs_placenta_statistics.Rdata"))
+load(here("Analyses/Results/Descriptive", "eQTMs_placenta_statistics.Rdata"))
+```
+
+```{r}
+load(here("Analyses/Results/Descriptive", "eQTLs_cvs_statistics.Rdata"))
+load(here("Analyses/Results/Descriptive", "meQTLs_cvs_statistics.Rdata"))
+load(here("Analyses/Results/Descriptive", "eQTMs_cvs_statistics.Rdata"))
+```
+
+## eQTLs
+```{r}
+genes_delahaye_eqtls <- unlist(read.table(here("02_Data/previous_studies/", "unique_gene_names_eqtl_delahaye.txt"))) # 615 genes (all unqiue)
+genes_kikas_eqtls <- unlist(read.table(here("02_Data/previous_studies/", "unique_gene_names_eqtl_kikas.txt"))) # 63 genes (all unique)
+genes_peng_eqtls <- unlist(read.table(here("02_Data/previous_studies/", "unique_gene_names_eqtl_peng.txt"))) # 3218 genes (all unique)
+
+load(here("02_Data/previous_studies/", "eQTL_data_peng.Rdata"))
+load(here("02_Data/previous_studies/", "eQTL_data_kikas.Rdata"))
+load(here("02_Data/previous_studies/", "eQTL_data_delahaye.Rdata"))
+
+load(here("02_Data/previous_studies/", "unique_gene_names_eqtl_placenta_boot_clumped.Rdata")) 
+load(here("02_Data/previous_studies/", "unique_gene_names_eqtl_cvs_boot_clumped.Rdata"))
+
+load(here("02_Data/previous_studies/", "full_eqtls_placenta_info.Rdata"))
+```
+
+```{r}
+genes_ours_placenta_eqtl <- unique(unique_gene_names_eqtl_placenta$hgnc_symbol)
+genes_ours_placenta_eqtl_all <- unique(eQTLs_placenta_statistics$HGNC_symbol)
+genes_ours_cvs_eqtl_all <- unique(eQTLs_cvs_statistics$HGNC_symbol)
+  
+genes_ours_placenta_eqtl <- stri_remove_empty(genes_ours_placenta_eqtl)
+length(genes_ours_placenta_eqtl)
+# 674 unique gene symbols (but 690 unique genes with ensembl)
+genes_ours_placenta_eqtl_all <- stri_remove_empty(genes_ours_placenta_eqtl_all)
+genes_ours_cvs_eqtl_all <- stri_remove_empty(genes_ours_cvs_eqtl_all)
+```
+
+## eQTMs
+```{r}
+genes_delahaye_eqtms <- unlist(read.table(here("02_Data/previous_studies/", "unique_gene_names_eqtm_delahaye.txt")))
+load(here("02_Data/previous_studies/", "eQTM_data_delahaye.Rdata"))
+
+load(here("02_Data/previous_studies/", "unique_gene_names_eqtm_placenta_boot.Rdata")) 
+load(here("02_Data/previous_studies/", "unique_gene_names_eqtm_cvs_boot.Rdata"))
+
+load(here("02_Data/previous_studies/", "full_eqtms_placenta_info.Rdata"))
+```
+
+```{r}
+genes_ours_placenta_eqtm <- unique(unique_gene_names_eqtm_placenta$hgnc_symbol)
+genes_ours_placenta_eqtm_all <- unique(eQTMs_placenta_statistics$HGNC_symbol)
+genes_ours_cvs_eqtm_all <- unique(eQTMs_cvs_statistics$HGNC_symbol)
+
+genes_ours_placenta_eqtm <- stri_remove_empty(genes_ours_placenta_eqtm)
+length(genes_ours_placenta_eqtm)
+#  2161 unique gene symbols (but 2188 unique genes with ensembl)
+genes_ours_placenta_eqtm_all <- stri_remove_empty(genes_ours_placenta_eqtm_all)
+genes_ours_cvs_eqtm_all <- stri_remove_empty(genes_ours_cvs_eqtm_all)
+```
+
+## meQTLs
+```{r}
+cpgs_delahaye_meqtls <- unlist(read.table(here("02_Data/previous_studies/", "unique_cpg_names_meqtl_delahaye.txt"))) 
+cpgs_do_meqtls <- unlist(read.table(here("02_Data/previous_studies/", "unique_cpg_names_meqtl_do.txt"))) 
+
+load(here("02_Data/previous_studies/", "meQTL_data_delahaye.Rdata"))
+load(here("02_Data/previous_studies/", "meQTL_data_do.Rdata"))
+
+load(here("02_Data/previous_studies/", "unique_cpgs_meqtl_placenta_in450k.Rdata")) 
+load(here("02_Data/previous_studies/", "unique_cpgs_meqtl_cvs_in450k.Rdata"))
+```
+
+```{r}
+length(cpgs_delahaye_meqtls)
+length(cpgs_do_meqtls)
+length(unique_cpgs_meqtl_placenta_in450k) # 50,008 unqiue 450K cpgs (among our epic)
+
+cpgs_ours_placenta_meqtl_all <- unique(meQTLs_placenta_statistics$eCpG)
+cpgs_ours_cvs_meqtl_all <- unique(meQTLs_cvs_statistics$eCpG)
+```
+
+##################################################################################
+
+# overlap between our study and previous
+
+## eQTL genes
+### % overlap in hits
+```{r}
+eqtl_genes <- list(ITU = genes_ours_placenta_eqtl, Kikas = genes_kikas_eqtls, Delahaye = genes_delahaye_eqtls, Peng = genes_peng_eqtls)
+```
+
+How many times does a gene occur?
+```{r}
+eqtl_gene_count <- as.data.frame(table(unlist(eqtl_genes)))
+names(eqtl_gene_count) <- c("gene", "frequency")
+eqtl_genes_our_count <- eqtl_gene_count[eqtl_gene_count$gene %in% genes_ours_placenta_eqtl, ]
+```
+
+For our genes we substract -1 from the frequency to get in how many other studies a gene occured (instead of raw frequency)
+```{r}
+eqtl_genes_our_count$count_other_studies <- eqtl_genes_our_count$frequency -1
+```
+
+We merge this info with our info including the ENSEMBLs
+```{r}
+eqtl_genes_placenta_otherstudies <- merge(unique_gene_names_eqtl_placenta, eqtl_genes_our_count[-2], by.x = "hgnc_symbol", by.y="gene", all.x=T)
+```
+
+How many genes are found in at least one other study?
+```{r}
+nrow(subset(eqtl_genes_placenta_otherstudies, count_other_studies >=1))
+```
+How many %?
+```{r}
+cat("These are", (504 / 674) * 100, "% from our placenta eQTL gene symbols. \n")
+cat("These are", (504 / 690) * 100, "% from our overall eQTL placenta genes.")
+```
+
+### add indicator in how many other studies the gene was found
+```{r}
+eqtl_genes_all_placenta <- list(ITU = genes_ours_placenta_eqtl_all, Kikas = genes_kikas_eqtls, Delahaye = genes_delahaye_eqtls, Peng = genes_peng_eqtls)
+eqtl_genes_all_cvs <- list(ITU = genes_ours_cvs_eqtl_all, Kikas = genes_kikas_eqtls, Delahaye = genes_delahaye_eqtls, Peng = genes_peng_eqtls)
+```
+
+How many times does a gene occur?
+```{r}
+eqtl_gene_count_all_placenta <- as.data.frame(table(unlist(eqtl_genes_all_placenta)))
+names(eqtl_gene_count_all_placenta) <- c("gene", "frequency")
+eqtl_genes_our_count_all_placenta <- eqtl_gene_count_all_placenta[eqtl_gene_count_all_placenta$gene %in% genes_ours_placenta_eqtl_all, ]
+
+eqtl_gene_count_all_cvs <- as.data.frame(table(unlist(eqtl_genes_all_cvs)))
+names(eqtl_gene_count_all_cvs) <- c("gene", "frequency")
+eqtl_genes_our_count_all_cvs <- eqtl_gene_count_all_cvs[eqtl_gene_count_all_cvs$gene %in% genes_ours_cvs_eqtl_all, ]
+```
+
+For our genes we substract -1 from the frequency to get in how many other studies a gene occured (instead of raw frequency)
+```{r}
+eqtl_genes_our_count_all_placenta$count_other_studies <- eqtl_genes_our_count_all_placenta$frequency -1
+eqtl_genes_our_count_all_cvs$count_other_studies <- eqtl_genes_our_count_all_cvs$frequency -1
+```
+
+We merge this info with our info including the ENSEMBLs
+```{r}
+eQTLs_placenta_statistics <- merge(eQTLs_placenta_statistics, eqtl_genes_our_count_all_placenta[-2], by.x = "HGNC_symbol", by.y="gene", all.x=T)
+eQTLs_cvs_statistics <- merge(eQTLs_cvs_statistics, eqtl_genes_our_count_all_cvs[-2], by.x = "HGNC_symbol", by.y="gene", all.x=T)
+```
+
+change column order
+```{r}
+eQTLs_placenta_statistics <- eQTLs_placenta_statistics[,c(3,2,1,4:28)]
+eQTLs_cvs_statistics <- eQTLs_cvs_statistics[,c(3,2,1,4:28)]
+```
+
+export full eQTL placenta statistic table
+```{r, warning=F}
+#write.csv(eQTLs_placenta_statistics, file = here("Analyses/Results/Descriptive", "eQTLs_placenta_statistics.csv"), row.names = FALSE, col.names = T)
+save(eQTLs_placenta_statistics, file = here("Analyses/Results/Descriptive", "eQTLs_placenta_statistics.Rdata"))
+```
+
+export full eQTL cvs statistic table
+```{r, warning = F}
+#write.csv(eQTLs_cvs_statistics, file = here("Analyses/Results/Descriptive", "eQTLs_cvs_statistics.csv"), row.names = FALSE, col.names = T)
+save(eQTLs_cvs_statistics, file = here("Analyses/Results/Descriptive", "eQTLs_cvs_statistics.Rdata"))
+```
+
+## eQTM genes
+### % overlap in hits
+```{r}
+eqtm_genes <- list(ITU = genes_ours_placenta_eqtm, Delahaye = genes_delahaye_eqtms)
+```
+
+How many times does a gene occur?
+```{r}
+eqtm_gene_count <- as.data.frame(table(unlist(eqtm_genes)))
+names(eqtm_gene_count) <- c("gene", "frequency")
+eqtm_genes_our_count <- eqtm_gene_count[eqtm_gene_count$gene %in% genes_ours_placenta_eqtm, ]
+```
+
+For our genes we substract -1 from the frequency to get in how many other studies a gene occured (instead of raw frequency)
+```{r}
+eqtm_genes_our_count$count_other_studies <- eqtm_genes_our_count$frequency -1
+```
+
+We merge this info with our info including the ENSEMBLs
+```{r}
+eqtm_genes_placenta_otherstudies <- merge(unique_gene_names_eqtm_placenta, eqtm_genes_our_count[-2], by.x = "hgnc_symbol", by.y="gene", all.x=T)
+```
+
+How many genes are found in at least one other study?
+```{r}
+nrow(subset(eqtm_genes_placenta_otherstudies, count_other_studies >=1))
+```
+
+How many %?
+```{r}
+cat("These are", (319 / 2161) * 100, "% from our placenta eQTM gene symbols. \n")
+cat("These are", (319 / 2188) * 100, "% from our overall eQTM placenta genes.")
+```
+
+### add indicator in how many other studies the gene was found
+```{r}
+eqtm_genes_all_placenta <- list(ITU = genes_ours_placenta_eqtm_all, Delahaye = genes_delahaye_eqtms)
+eqtm_genes_all_cvs <- list(ITU = genes_ours_cvs_eqtm_all, Delahaye = genes_delahaye_eqtms)
+```
+
+How many times does a gene occur?
+```{r}
+eqtm_gene_count_all_placenta <- as.data.frame(table(unlist(eqtm_genes_all_placenta)))
+names(eqtm_gene_count_all_placenta) <- c("gene", "frequency")
+eqtm_genes_our_count_all_placenta <- eqtm_gene_count_all_placenta[eqtm_gene_count_all_placenta$gene %in% genes_ours_placenta_eqtm_all, ]
+
+eqtm_gene_count_all_cvs <- as.data.frame(table(unlist(eqtm_genes_all_cvs)))
+names(eqtm_gene_count_all_cvs) <- c("gene", "frequency")
+eqtm_genes_our_count_all_cvs <- eqtm_gene_count_all_cvs[eqtm_gene_count_all_cvs$gene %in% genes_ours_cvs_eqtm_all, ]
+```
+
+For our genes we substract -1 from the frequency to get in how many other studies a gene occured (instead of raw frequency)
+```{r}
+eqtm_genes_our_count_all_placenta$count_other_studies <- eqtm_genes_our_count_all_placenta$frequency -1
+eqtm_genes_our_count_all_cvs$count_other_studies <- eqtm_genes_our_count_all_cvs$frequency -1
+```
+
+We merge this info with our info including the ENSEMBLs
+```{r}
+eQTMs_placenta_statistics <- merge(eQTMs_placenta_statistics, eqtm_genes_our_count_all_placenta[-2], by.x = "HGNC_symbol", by.y="gene", all.x=T)
+eQTMs_cvs_statistics <- merge(eQTMs_cvs_statistics, eqtm_genes_our_count_all_cvs[-2], by.x = "HGNC_symbol", by.y="gene", all.x=T)
+```
+
+change column order
+```{r}
+eQTMs_placenta_statistics <- eQTMs_placenta_statistics[,c(3,2,1,4:22)]
+eQTMs_cvs_statistics <- eQTMs_cvs_statistics[,c(3,2,1,4:22)]
+```
+
+export full eqtm placenta statistic table
+```{r, warning=F}
+#write.csv(eQTMs_placenta_statistics, file = here("Analyses/Results/Descriptive", "eQTMs_placenta_statistics.csv"), row.names = FALSE, col.names = T)
+save(eQTMs_placenta_statistics, file = here("Analyses/Results/Descriptive", "eQTMs_placenta_statistics.Rdata"))
+```
+
+export full eqtm cvs statistic table
+```{r, warning = F}
+#write.csv(eQTMs_cvs_statistics, file = here("Analyses/Results/Descriptive", "eQTMs_cvs_statistics.csv"), row.names = FALSE, col.names = T)
+save(eQTMs_cvs_statistics, file = here("Analyses/Results/Descriptive", "eQTMs_cvs_statistics.Rdata"))
+```
+
+## meQTL cpgs
+### % overlap in hits
+```{r}
+meqtl_cpgs <- list(ITU = unique_cpgs_meqtl_placenta_in450k, Delahaye = cpgs_delahaye_meqtls, Do = cpgs_do_meqtls)
+length(unique_cpgs_meqtl_placenta_in450k)
+```
+
+How many times does a cpg occur?
+```{r}
+meqtl_cpg_count <- as.data.frame(table(unlist(meqtl_cpgs)))
+names(meqtl_cpg_count) <- c("cpg", "frequency")
+meqtl_cpg_our_count <- meqtl_cpg_count[meqtl_cpg_count$cpg %in% unique_cpgs_meqtl_placenta_in450k, ]
+```
+
+For our cpgs we substract -1 from the frequency to get in how many other studies a gene occured (instead of raw frequency)
+```{r}
+meqtl_cpg_our_count$count_other_studies <- meqtl_cpg_our_count$frequency -1
+meqtl_cpg_our_count <- meqtl_cpg_our_count[,-2]
+```
+
+How many cpgs are found in at least one other study?
+```{r}
+nrow(subset(meqtl_cpg_our_count, count_other_studies >=1))
+```
+
+How many %?
+```{r}
+cat("These are", (2987 / 50008) * 100, "% from our meQTL CpGs which are also included in the 450K array. \n")
+```
+
+### add indicator in how many other studies the gene was found
+```{r}
+meqtl_cpgs_all_placenta <- list(ITU = cpgs_ours_placenta_meqtl_all, Delahaye = cpgs_delahaye_meqtls, Do = cpgs_do_meqtls)
+meqtl_cpgs_all_cvs <- list(ITU = cpgs_ours_cvs_meqtl_all, Delahaye = cpgs_delahaye_meqtls, Do = cpgs_do_meqtls)
+```
+
+How many times does a cpg occur?
+```{r}
+meqtl_cpg_count_all_placenta <- as.data.frame(table(unlist(meqtl_cpgs_all_placenta)))
+names(meqtl_cpg_count_all_placenta) <- c("cpg", "frequency")
+meqtl_cpgs_our_count_all_placenta <- meqtl_cpg_count_all_placenta[meqtl_cpg_count_all_placenta$cpg %in% cpgs_ours_placenta_meqtl_all, ]
+
+meqtl_cpg_count_all_cvs <- as.data.frame(table(unlist(meqtl_cpgs_all_cvs)))
+names(meqtl_cpg_count_all_cvs) <- c("cpg", "frequency")
+meqtl_cpgs_our_count_all_cvs <- meqtl_cpg_count_all_cvs[meqtl_cpg_count_all_cvs$cpg %in% cpgs_ours_cvs_meqtl_all, ]
+```
+
+For our cpgs we substract -1 from the frequency to get in how many other studies a gene occured (instead of raw frequency)
+```{r}
+meqtl_cpgs_our_count_all_placenta$count_other_studies <- meqtl_cpgs_our_count_all_placenta$frequency -1
+meqtl_cpgs_our_count_all_cvs$count_other_studies <- meqtl_cpgs_our_count_all_cvs$frequency -1
+```
+
+We merge this info with our info 
+```{r}
+meQTLs_placenta_statistics <- merge(meQTLs_placenta_statistics, meqtl_cpgs_our_count_all_placenta[-2], by.x = "eCpG", by.y="cpg", all.x=T)
+meQTLs_cvs_statistics <- merge(meQTLs_cvs_statistics, meqtl_cpgs_our_count_all_cvs[-2], by.x = "eCpG", by.y="cpg", all.x=T)
+```
+
+change column order
+```{r}
+meQTLs_placenta_statistics <- meQTLs_placenta_statistics[,c(2,1,3:25)]
+meQTLs_cvs_statistics <- meQTLs_cvs_statistics[,c(2,1,3:25)]
+```
+
+
+export full meqtl placenta statistic table
+```{r, warning=F}
+#write.csv(meQTLs_placenta_statistics, file = here("Analyses/Results/Descriptive", "meQTLs_placenta_statistics.csv"), row.names = FALSE, col.names = T)
+save(meQTLs_placenta_statistics, file = here("Analyses/Results/Descriptive", "meQTLs_placenta_statistics.Rdata"))
+```
+
+export full meqtl cvs statistic table
+```{r, warning = F}
+#write.csv(meQTLs_cvs_statistics, file = here("Analyses/Results/Descriptive", "meQTLs_cvs_statistics.csv"), row.names = FALSE, col.names = T)
+save(meQTLs_cvs_statistics, file = here("Analyses/Results/Descriptive", "meQTLs_cvs_statistics.Rdata"))
+```
+
+
+################################################################################
+
+## Plot
+### eQTL genes
+Type of Data:
+Delahaye: Illumina TruSeq RNA kit: 23,003 genes
+Kikas:  total RNA sequencing was performed on Illumina HiSeq2000
+Peng: RNAseq (Illumina HiSeq)
+
+```{r}
+colors_external_eqtl_genes <- c("#CC6677", "#AA4499", "#882255")
+grey_colors_external_eqtl_genes <- c("#BDBDBD", "#525252", "#252525")
+```
+
+```{r}
+length(genes_ours_placenta_eqtl)
+length(genes_kikas_eqtls)
+length(genes_peng_eqtls)
+length(genes_delahaye_eqtls)
+```
+
+
+```{r}
+previous_studies_genes_eqtls_overlap <-
+venn.diagram(
+  x = list(genes_ours_placenta_eqtl, genes_kikas_eqtls, genes_peng_eqtls, genes_delahaye_eqtls),
+  category.names = c("ITU \n Placenta", "Kikas et al. \n (2019)", "Peng et al. \n (2017)", "Delahaye et al. \n (2018)"),
+  filename = NULL,
+  output=TRUE,
+  
+  # Output features
+  imagetype="png" ,
+  height = standard_height_mm/5 , 
+  width = standard_width_mm_single , 
+  units = "mm",
+  resolution = 600,
+  compression = "lzw",
+  
+  # Circles
+  lwd = 2,
+  lty = 'blank',
+  fill = c("gray49", grey_colors_external_eqtl_genes),
+  scale = FALSE,
+  euler.d = TRUE,
+   
+  # Numbers
+  cex = .7,
+  #fontface = "bold",
+  fontfamily = "Helvetica",
+  ext.text = FALSE,
+  #ext.percent = c(50,50,50),
+   
+  # Set names
+  cat.cex = .7,
+  #cat.fontface = "bold",
+  cat.default.pos = "outer",
+  #cat.pos = c(0, 0, 0, 340),
+  cat.dist = c(0.25, 0.25, 0.15, 0.15),
+  cat.fontfamily = "Helvetica",
+  #rotation.degree = 180
+)
+
+```
+
+### eQTM genes
+Type of Data:
+Delahaye: Illumina TruSeq RNA kit: 23,003 genes
+
+```{r}
+colors_external_eqtm_genes <- "#882255"
+grey_colors_external_eqtm_genes <- "#252525"
+```
+
+```{r}
+length(genes_ours_placenta_eqtm)
+length(genes_delahaye_eqtms)
+```
+
+```{r}
+previous_studies_genes_eqtms_overlap <-
+venn.diagram(
+  x = list(genes_ours_placenta_eqtm, genes_delahaye_eqtms),
+  category.names = c("ITU \n Placenta", "Delahaye et al. \n (2018)"),
+  filename = NULL,
+  output=TRUE,
+  
+  # Output features
+  imagetype="png" ,
+  height = standard_height_mm/5 , 
+  width = standard_width_mm_single , 
+  units = "mm",
+  resolution = 600,
+  compression = "lzw",
+  
+  # Circles
+  lwd = 2,
+  lty = 'blank',
+  fill = c("gray49", grey_colors_external_eqtm_genes),
+  scale = FALSE,
+  euler.d = TRUE,
+   
+  # Numbers
+  cex = .7,
+  #fontface = "bold",
+  fontfamily = "Helvetica",
+  ext.text = FALSE,
+  #ext.percent = c(50,50,50),
+   
+  # Set names
+  cat.cex = .7,
+  #cat.fontface = "bold",
+  cat.default.pos = "outer",
+  #cat.pos = c(0, 0, 0, 340),
+  cat.dist = c(0.05, 0.035),
+  cat.fontfamily = "Helvetica",
+  #rotation.degree = 180
+)
+
+```
+
+
+### meQTL CpGs
+Type of Data:
+Delahaye & Do both 450K array
+
+```{r}
+colors_external_meqtl_cpgs <- c("#6699CC", "#332288")
+grey_colors_external_meqtl_cpgs <- c("#252525", "#525252")
+```
+
+```{r}
+length(unique_cpgs_meqtl_placenta_in450k)
+length(cpgs_delahaye_meqtls)
+length(cpgs_do_meqtls)
+```
+
+```{r}
+previous_studies_cpgs_meqtls_overlap <-
+venn.diagram(
+  x = list(unique_cpgs_meqtl_placenta_in450k, cpgs_delahaye_meqtls, cpgs_do_meqtls),
+  category.names = c("ITU \n Placenta", "Delahaye et al. \n (2018)", "Do et al. 2016"),
+  filename = NULL,
+  output=TRUE,
+  
+  # Output features
+  imagetype="png" ,
+  height = standard_height_mm/5 , 
+  width = standard_width_mm_single , 
+  units = "mm",
+  resolution = 600,
+  compression = "lzw",
+  
+  # Circles
+  lwd = 2,
+  lty = 'blank',
+  fill = c("gray49", grey_colors_external_meqtl_cpgs),
+  scale = FALSE,
+  euler.d = TRUE,
+   
+  # Numbers
+  cex = .7,
+  #fontface = "bold",
+  fontfamily = "Helvetica",
+  ext.text = FALSE,
+  #ext.percent = c(50,50,50),
+   
+  # Set names
+  cat.cex = .7,
+  #cat.fontface = "bold",
+  cat.default.pos = "outer",
+  #cat.pos = c(0, 0, 0, 340),
+  #cat.dist = c(0.25, 0.25, 0.15, 0.15),
+  cat.fontfamily = "Helvetica",
+  #rotation.degree = 180
+)
+
+```
+
+
+```{r}
+previous_studies_overlap <- 
+  grid.arrange(arrangeGrob(gTree(children=previous_studies_genes_eqtls_overlap), 
+                           bottom = textGrob(expression(bold("eQTL Genes")), gp = gpar(fontfamily = "Helvetica" , fontsize = standard_textsize)), top = textGrob(expression(bold("a")), x = unit(0.02, "npc"), y   = unit(0.98, "npc"), just=c("left","top"))), 
+               arrangeGrob(gTree(children=previous_studies_genes_eqtms_overlap), 
+                           textGrob(expression(bold("eQTM Genes")), gp = gpar(fontfamily = "Helvetica" , fontsize = standard_textsize)), top = textGrob(expression(bold("b")), x = unit(0.02, "npc"), y   = unit(0.98, "npc"), just=c("left","top"))), 
+               arrangeGrob(gTree(children=previous_studies_cpgs_meqtls_overlap), 
+                           bottom=textGrob(expression(bold("meQTL CpGs")), gp = gpar(fontfamily = "Helvetica" , fontsize = standard_textsize)), top = textGrob(expression(bold("c")), x = unit(0.02, "npc"), y = unit(0.98, "npc"), just=c("left","top"))), nrow=3)
+
+
+
+```
+
+
+
+```{r}
+ggsave(here("Analyses/Results/RelationPrevious/", "overlap_previous_studies_venn.pdf"),
+previous_studies_overlap, width=standard_width_mm_single, height=standard_height_mm/2, units="mm", dpi=600, scale=2, device = cairo_pdf)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,1090 @@
+---
+title: "Script_1_3_General_Format_Data"
+author: Linda Dieckmann
+date: 2022
+output: github_document
+---
+
+In this notebook we format our data for QTL analyses.
+
+# load packages
+```{r, warning=FALSE}
+library(here)
+library(dplyr)
+library(data.table)
+library(car) ## I would add this library here, since you use it multiple times
+```
+
+If you update package(s) call 
+  renv::snapshot() 
+to save the current picture of the project.
+
+```{r}
+writeLines(capture.output(sessionInfo()), here("Analyses/Scripts/sessionInfos/", "sessionInfo_Script_1_3.txt"))
+```
+
+# load functions
+```{r}
+source(here("Analyses/Scripts/", "functions.R"))
+```
+
+# load data
+## genotypes
+```{r}
+load(here("02_Data/raw/", "geno_t_fullqced_IDc.Rdata"))
+load(here("02_Data/raw/", "geno_info.Rdata")) # info from bim file
+```
+
+## RNA and confounders
+```{r}
+load(here("02_Data/prepared/", "inv_norm_placenta_tmm_filtered.Rdata"))
+load(here("02_Data/prepared/", "inv_norm_cvs_tmm_filtered.Rdata"))
+```
+
+```{r}
+load(here("02_Data/prepared/", "confounders_RNA_placenta.Rdata"))
+load(here("02_Data/prepared/", "confounders_RNA_cvs.Rdata"))
+```
+
+## methylation and confounders
+```{r}
+load(here("02_Data/prepared/", "methylation_M_placenta_filtered.Rdata"))
+load(here("02_Data/prepared/", "methylation_M_cvs_filtered.Rdata"))
+```
+
+```{r}
+load(here("02_Data/prepared/", "confounders_meth_placenta.Rdata"))
+load(here("02_Data/prepared/", "confounders_meth_cvs.Rdata"))
+```
+
+## annotations
+```{r}
+load(here("02_Data/prepared/", "annotation_genes_placenta_rna.Rdata"))
+load(here("02_Data/prepared/", "annotation_genes_cvs_rna.Rdata"))
+load(here("02_Data/prepared/", "annotation_placenta_meth.Rdata"))
+load(here("02_Data/prepared/", "annotation_cvs_meth.Rdata"))
+```
+
+# prepare data for matrix eQTL
+
+I need files for genotype, expression (+ methylation) and covariates in the following format: 
+columns corresponding to samples and with one gene/SNP/covariate in each row.
+
+The columns of all three files (IDs) must have matching order. All measurements must be numeric and the values in the genotype data set do not have to be descrete.
+
+example genotype: 
+
+| id | Sam_01 | Sam_02 | Sam_03 |
+|------|------|------|------|------|
+| Snp_01 | 2 | 0 | 2 |
+| Snp_02 | 0 | 1 | 1 |
+| Snp_03 | 1 | 0 | 1 |
+
+example expression 
+id Sam_01 Sam_02 Sam_03
+Gene_01 4.91 4.63 5.18
+Gene_02 13.78 13.14 13.18
+
+example covariates: 
+id Sam_01 Sam_02 Sam_03 
+gender 0 0 0
+age 36 40 46
+
+example gene location: geneid chr s1 s2 
+Gene_01 chr1 721289 731289 
+Gene_02 chr1 752565 762565
+= information about transcript locations, must have 4 columns - the name, chromosome, and positions of the left and right ends
+
+example snp location: snp chr pos 
+Snp_01 chr1 721289 
+Snp_02 chr1 752565
+= must have 3 columns - SNP name, chromosome, and position
+
+## genotypes
+were pre-processed with plink = 3 plink files:
+
+* .bed: Primary representation of genotype calls at biallelic variants.
+00 Homozygous for first allele in .bim file 
+01 Missing genotype 
+10 Heterozygous 
+11 Homozygous for second allele in .bim file 
+example: 1 snp1 0 1 G A 1 snp2 0 2 1 2
+
+* .bim: A text file with no header line, and one line per variant with the following six fields: Chromosome code (either an integer, or ‘X’/‘Y’/‘XY’/‘MT’; ‘0’ indicates unknown) or name Variant identifier Position in morgans or centimorgans (safe to use dummy value of ‘0’) Base-pair coordinate (1-based; limited to 231-2) 
+Allele 1 (corresponding to clear bits in .bed; usually minor) 
+Allele 2 (corresponding to set bits in .bed; usually major)
+
+* .fam: A text file with no header line, and one line per sample with the following six fields: Family ID (‘FID’) Within-family ID (‘IID’; cannot be ‘0’) Within-family ID of father (‘0’ if father isn’t in dataset) Within-family ID of mother (‘0’ if mother isn’t in dataset) Sex code (‘1’ = male, ‘2’ = female, ‘0’ = unknown) Phenotype value (‘1’ = control, ‘2’ = case, ‘-9’/‘0’/non-numeric = missing data if case/control)
+
+I've already read them into R using the read.plink function; the R object I can load here contains the number of alleles for the corresponding SNP in every person.
+
+
+```{r}
+dim(geno_t_fullqced_IDc)
+```
+
+```{r}
+maf = data.frame(cbind(rownames(geno_t_fullqced_IDc), (rowMeans(geno_t_fullqced_IDc, na.rm = TRUE)/2)))
+colnames(maf) <- c("snp", "af")
+maf$af <- as.numeric(maf$af)
+```
+
+```{r}
+# calculate the parallel minimum of two vectors (here maf and 1-maf), to ensure we refer to minor
+maf$maf <- as.numeric(formatC(pmin(maf$af, 1-maf$af), digits=4, format="f"))
+
+# (The term MAF implies that the allele for which we return the measure has to be the minor (= less common) allele. This means that the MAF is smaller than 0.5 by definition.)
+```
+
+```{r}
+range(maf$maf)
+```
+
+```{r}
+# How many MAF < threshold, as a re-check
+sum(maf$maf < 0.01)
+sum(maf$maf < 0.05)
+sum(maf$maf < 0.10) 
+```
+
+```{r}
+geno_info_with_maf <- merge(geno_info, maf, by.x="snp.name", by.y="snp")
+```
+
+```{r}
+save(geno_info_with_maf, file=here("02_Data/prepared/", "geno_info_with_maf.Rdata"))
+```
+
+## expression
+### placenta
+```{r}
+dim(inv_norm_placenta_tmm_filtered)
+```
+rownames are ensembl IDs, colnames are IDs
+
+### cvs
+```{r}
+dim(inv_norm_cvs_tmm_filtered)
+```
+
+### common probes
+```{r}
+common_genes_placenta_cvs <- Reduce(intersect, list(rownames(inv_norm_placenta_tmm_filtered), rownames(inv_norm_cvs_tmm_filtered)))
+length(common_genes_placenta_cvs)
+```
+
+## methylation
+### placenta
+```{r}
+dim(methylation_M_placenta_filtered)
+```
+
+### CVS
+```{r}
+dim(methylation_M_cvs_filtered)
+```
+
+### common probes
+```{r}
+common_cpgs_placenta_cvs <- Reduce(intersect, list(rownames(methylation_M_placenta_filtered), rownames(methylation_M_cvs_filtered)))
+length(common_cpgs_placenta_cvs)
+```
+
+## covariates
+we will use SV1 (RNA)/ cell types + gestational age + child sex + ethnicity (-> genotypes)
+for all analyses
+
+Further, we will use delivery mode (vaginal vs. planned caesarian section vs. urgent caesarian section) for Placenta RNA
+and smoking for methylation (yes= quit during first trimester and smoked throughout pregnancy; no= no smoking during pregnancy)
+
+### for RNA
+#### Placenta
+```{r}
+cov_rna_placenta <- na.omit(confounders_RNA_placenta[, c("IDfamily", "SV1", "Child_Sex", "Gestational_Age_Weeks", "Delivery_mode_3l",  "Maternal_Diabetes_dichotom", "ethnicity1", "ethnicity2")])
+cov_rna_placenta$Child_Sex <- as.numeric(as.character(with(cov_rna_placenta, car::recode(Child_Sex, "'male'=0; 'female'=1"))))
+cov_rna_placenta$Delivery_mode_3l <- as.numeric(as.character(with(cov_rna_placenta, car::recode(Delivery_mode_3l, "'Vaginal_all'=0; 'Planned caesarian section'=1; 'urgent caesarian section'=2"))))
+cov_rna_placenta$Maternal_Diabetes_dichotom <- as.numeric(as.character(with(cov_rna_placenta, car::recode(Maternal_Diabetes_dichotom, "'no diabetes this pregnancy'=0; 'diabetes in current pregnancy'=1"))))
+cov_rna_placenta <- setNames(data.frame(t(cov_rna_placenta[, -1])), cov_rna_placenta[, 1])
+cov_rna_placenta <- as.matrix(cov_rna_placenta)
+dim(cov_rna_placenta)
+```
+
+save
+```{r}
+save(cov_rna_placenta, file = here("02_Data/prepared", "cov_rna_placenta.Rdata"))
+```
+
+#### CVS
+```{r}
+cov_rna_cvs <- na.omit(confounders_RNA_cvs[, c("IDfamily", "SV1", "Child_Sex", "gestage_at_CVS_weeks", "ethnicity1", "ethnicity2")])
+cov_rna_cvs$Child_Sex <- as.numeric(as.character(with(cov_rna_cvs, car::recode(Child_Sex, "'male'=0; 'female'=1"))))
+cov_rna_cvs <- setNames(data.frame(t(cov_rna_cvs[, -1])), cov_rna_cvs[, 1])
+cov_rna_cvs <- as.matrix(cov_rna_cvs)
+dim(cov_rna_cvs)
+```
+
+save
+```{r}
+save(cov_rna_cvs, file = here("02_Data/prepared", "cov_rna_cvs.Rdata"))
+```
+
+### for methylation
+#### Placenta
+```{r}
+cov_meth_placenta <- na.omit(confounders_meth_placenta[, c("IDfamily", "PC1_cells", "PC2_cells", "PC3_cells", "Child_Sex", "Gestational_Age_Weeks", "Delivery_mode_3l",  "Maternal_Diabetes_dichotom", "smoking_dichotom", "ethnicity1", "ethnicity2")])
+cov_meth_placenta$Child_Sex <- as.numeric(as.character(with(cov_meth_placenta, car::recode(Child_Sex, "'male'=0; 'female'=1"))))
+cov_meth_placenta$smoking_dichotom <- as.numeric(as.character(with(cov_meth_placenta, car::recode(smoking_dichotom, "'no'=0; 'yes'=1"))))
+cov_meth_placenta$Delivery_mode_3l <- as.numeric(as.character(with(cov_meth_placenta, car::recode(Delivery_mode_3l, "'Vaginal_all'=0; 'Planned caesarian section'=1; 'urgent caesarian section'=2"))))
+cov_meth_placenta$Maternal_Diabetes_dichotom <- as.numeric(as.character(with(cov_meth_placenta, car::recode(Maternal_Diabetes_dichotom, "'no diabetes this pregnancy'=0; 'diabetes in current pregnancy'=1"))))
+cov_meth_placenta <- setNames(data.frame(t(cov_meth_placenta[, -1])), cov_meth_placenta[, 1])
+cov_meth_placenta <- as.matrix(cov_meth_placenta)
+dim(cov_meth_placenta)
+```
+
+save
+```{r}
+save(cov_meth_placenta, file = here("02_Data/prepared", "cov_meth_placenta.Rdata"))
+```
+
+#### CVS
+```{r}
+cov_meth_cvs <- na.omit(confounders_meth_cvs[, c("IDfamily", "PC1_cells", "PC2_cells", "PC3_cells", "PC4_cells", "Child_Sex", "gestage_at_CVS_weeks", "Delivery_mode_3l",  "Maternal_Diabetes_dichotom", "smoking_dichotom", "ethnicity1", "ethnicity2")])
+cov_meth_cvs$Child_Sex <- as.numeric(as.character(with(cov_meth_cvs, car::recode(Child_Sex, "'male'=0; 'female'=1"))))
+cov_meth_cvs$smoking_dichotom <- as.numeric(as.character(with(cov_meth_cvs, car::recode(smoking_dichotom, "'no'=0; 'yes'=1"))))
+cov_meth_cvs$Delivery_mode_3l <- as.numeric(as.character(with(cov_meth_cvs, car::recode(Delivery_mode_3l, "'Vaginal_all'=0; 'Planned caesarian section'=1; 'urgent caesarian section'=2"))))
+cov_meth_cvs$Maternal_Diabetes_dichotom <- as.numeric(as.character(with(cov_meth_cvs, car::recode(Maternal_Diabetes_dichotom, "'no diabetes this pregnancy'=0; 'diabetes in current pregnancy'=1"))))
+cov_meth_cvs <- setNames(data.frame(t(cov_meth_cvs[, -1])), cov_meth_cvs[, 1])
+cov_meth_cvs <- as.matrix(cov_meth_cvs)
+dim(cov_meth_cvs)
+```
+
+save
+```{r}
+save(cov_meth_cvs, file = here("02_Data/prepared", "cov_meth_cvs.Rdata"))
+```
+
+## gene location
+### RNA
+#### placenta
+```{r}
+gene_location_placenta_rna <- annotation_genes_placenta_rna[ ,c("ensembl_gene_id", "chromosome_name", "start_position", "end_position")]
+colnames(gene_location_placenta_rna) <- c("ensembl", "chr", "s1", "s2")
+```
+
+```{r}
+write.table(gene_location_placenta_rna, file = here("02_Data/prepared/", "gene_location_placenta_rna.txt"), sep = "\t", row.names = FALSE, quote=FALSE)
+save(gene_location_placenta_rna, file = here("02_Data/prepared/", "gene_location_placenta_rna.Rdata"))
+```
+
+#### CVS
+```{r}
+gene_location_cvs_rna <- annotation_genes_cvs_rna[ ,c("ensembl_gene_id", "chromosome_name", "start_position", "end_position")]
+colnames(gene_location_cvs_rna) <- c("ensembl", "chr", "s1", "s2")
+```
+
+```{r}
+write.table(gene_location_cvs_rna, file = here("02_Data/prepared/", "gene_location_cvs_rna.txt"), sep = "\t", row.names = FALSE, quote=FALSE)
+save(gene_location_cvs_rna, file = here("02_Data/prepared/", "gene_location_cvs_rna.Rdata"))
+```
+
+#### placenta + cvs common probes
+```{r}
+gene_location_placenta_rna_common_probes <- gene_location_placenta_rna[gene_location_placenta_rna$ensembl %in% common_genes_placenta_cvs, ]
+```
+
+```{r}
+gene_location_cvs_rna_common_probes <- gene_location_cvs_rna[gene_location_cvs_rna$ensembl %in% common_genes_placenta_cvs, ]
+```
+
+```{r}
+write.table(gene_location_placenta_rna_common_probes, file = here("02_Data/prepared/", "gene_location_placenta_rna_common_probes.txt"), sep = "\t", row.names = FALSE, quote=FALSE)
+save(gene_location_placenta_rna_common_probes, file = here("02_Data/prepared/", "gene_location_placenta_rna_common_probes.Rdata"))
+write.table(gene_location_cvs_rna_common_probes, file = here("02_Data/prepared/", "gene_location_cvs_rna_common_probes.txt"), sep = "\t", row.names = FALSE, quote=FALSE)
+save(gene_location_cvs_rna_common_probes, file = here("02_Data/prepared/", "gene_location_cvs_rna_common_probes.Rdata"))
+```
+
+### methylation
+#### placenta
+```{r}
+cpg_location_placenta_meth_meqtl <- annotation_placenta_meth[ ,c("Name", "chr", "pos")]
+cpg_location_placenta_meth_meqtl$chr <- gsub("chr", "", cpg_location_placenta_meth_meqtl$chr)
+colnames(cpg_location_placenta_meth_meqtl) <- c("cpg", "chr", "s1")
+cpg_location_placenta_meth_meqtl$s2 <- cpg_location_placenta_meth_meqtl$s1
+```
+
+```{r}
+cpg_location_placenta_meth_eqtm <- annotation_placenta_meth[ ,c("Name", "chr", "pos")]
+cpg_location_placenta_meth_eqtm$chr <- gsub("chr", "", cpg_location_placenta_meth_eqtm$chr)
+colnames(cpg_location_placenta_meth_eqtm) <- c("cpg", "chr", "s1")
+```
+
+```{r}
+write.table(cpg_location_placenta_meth_meqtl, file = here("02_Data/prepared/", "cpg_location_placenta_meth_meqtl.txt"), sep = "\t", row.names = FALSE, quote=FALSE)
+save(cpg_location_placenta_meth_meqtl, file = here("02_Data/prepared/", "cpg_location_placenta_meth_meqtl.Rdata"))
+
+write.table(cpg_location_placenta_meth_eqtm, file = here("02_Data/prepared/", "cpg_location_placenta_meth_eqtm.txt"), sep = "\t", row.names = FALSE, quote=FALSE)
+save(cpg_location_placenta_meth_eqtm, file = here("02_Data/prepared/", "cpg_location_placenta_meth_eqtm.Rdata"))
+```
+
+#### cvs
+```{r}
+cpg_location_cvs_meth_meqtl <- annotation_cvs_meth[ ,c("Name", "chr", "pos")]
+cpg_location_cvs_meth_meqtl$chr <- gsub("chr", "", cpg_location_cvs_meth_meqtl$chr)
+colnames(cpg_location_cvs_meth_meqtl) <- c("cpg", "chr", "s1")
+cpg_location_cvs_meth_meqtl$s2 <- cpg_location_cvs_meth_meqtl$s1
+```
+
+```{r}
+cpg_location_cvs_meth_eqtm <- annotation_cvs_meth[ ,c("Name", "chr", "pos")]
+cpg_location_cvs_meth_eqtm$chr <- gsub("chr", "", cpg_location_cvs_meth_eqtm$chr)
+colnames(cpg_location_cvs_meth_eqtm) <- c("cpg", "chr", "s1")
+```
+
+```{r}
+write.table(cpg_location_cvs_meth_meqtl, file = here("02_Data/prepared/", "cpg_location_cvs_meth_meqtl.txt"), sep = "\t", row.names = FALSE, quote=FALSE)
+save(cpg_location_cvs_meth_meqtl, file = here("02_Data/prepared/", "cpg_location_cvs_meth_meqtl.Rdata"))
+
+write.table(cpg_location_cvs_meth_eqtm, file = here("02_Data/prepared/", "cpg_location_cvs_meth_eqtm.txt"), sep = "\t", row.names = FALSE, quote=FALSE)
+save(cpg_location_cvs_meth_eqtm, file = here("02_Data/prepared/", "cpg_location_cvs_meth_eqtm.Rdata"))
+```
+
+#### common probes
+```{r}
+cpg_location_cvs_meth_meqtl_common_probes <- cpg_location_cvs_meth_meqtl[cpg_location_cvs_meth_meqtl$cpg %in% common_cpgs_placenta_cvs, ]
+cpg_location_placenta_meth_meqtl_common_probes <- cpg_location_placenta_meth_meqtl[cpg_location_placenta_meth_meqtl$cpg %in% common_cpgs_placenta_cvs, ]
+```
+
+```{r}
+cpg_location_cvs_meth_eqtm_common_probes <- cpg_location_cvs_meth_eqtm[cpg_location_cvs_meth_eqtm$cpg %in% common_cpgs_placenta_cvs, ]
+cpg_location_placenta_meth_eqtm_common_probes <- cpg_location_placenta_meth_eqtm[cpg_location_placenta_meth_eqtm$cpg %in% common_cpgs_placenta_cvs, ]
+```
+
+```{r}
+write.table(cpg_location_cvs_meth_meqtl_common_probes, file = here("02_Data/prepared/", "cpg_location_cvs_meth_meqtl_common_probes.txt"), sep = "\t", row.names = FALSE, quote=FALSE)
+save(cpg_location_cvs_meth_meqtl_common_probes, file = here("02_Data/prepared/", "cpg_location_cvs_meth_meqtl_common_probes.Rdata"))
+
+write.table(cpg_location_placenta_meth_meqtl_common_probes, file = here("02_Data/prepared/", "cpg_location_placenta_meth_meqtl_common_probes.txt"), sep = "\t", row.names = FALSE, quote=FALSE)
+save(cpg_location_placenta_meth_meqtl_common_probes, file = here("02_Data/prepared/", "cpg_location_placenta_meth_meqtl_common_probes.Rdata"))
+
+write.table(cpg_location_cvs_meth_eqtm_common_probes, file = here("02_Data/prepared/", "cpg_location_cvs_meth_eqtm_common_probes.txt"), sep = "\t", row.names = FALSE, quote=FALSE)
+save(cpg_location_cvs_meth_eqtm_common_probes, file = here("02_Data/prepared/", "cpg_location_cvs_meth_eqtm_common_probes.Rdata"))
+
+write.table(cpg_location_placenta_meth_eqtm_common_probes, file = here("02_Data/prepared/", "cpg_location_placenta_meth_eqtm_common_probes.txt"), sep = "\t", row.names = FALSE, quote=FALSE)
+save(cpg_location_placenta_meth_eqtm_common_probes, file = here("02_Data/prepared/", "cpg_location_placenta_meth_eqtm_common_probes.Rdata"))
+```
+
+## snp location
+I need location info from the .bim file
+### SNPs QCed, imputed, final and MAF < 0.05
+```{r}
+snplocation <- fread(here("02_Data/raw/", "itu_all_qc2_mafiltered.bim"), header = F, data.table = F)
+```
+
+```{r}
+colnames(snplocation) <- c("chr", "snp", "Pmc", "pos", "allele1", "allele2")
+# pos is base-pair coordinate (1-based; limited to 231-2) from plink
+```
+
+```{r}
+snplocation <- snplocation[,c("snp", "chr", "pos")]
+```
+
+```{r}
+write.table(snplocation, file = here("02_Data/prepared/", "snplocation.txt"), sep = "\t", row.names = FALSE, quote=FALSE)
+save(snplocation, file = here("02_Data/prepared/", "snplocation.Rdata"))
+```
+
+# QTL files
+## eQTLs (expression + genotypes)
+### placenta
+```{r}
+common_eqtl_placenta_ids <- Reduce(intersect, list(colnames(inv_norm_placenta_tmm_filtered), colnames(geno_t_fullqced_IDc), colnames(cov_rna_placenta)))
+length(common_eqtl_placenta_ids)
+```
+
+```{r}
+geno_t_fullqced_IDc_placenta_ordered_eqtl <- geno_t_fullqced_IDc[, common_eqtl_placenta_ids]
+inv_norm_placenta_tmm_filtered_ordered_eqtl <- inv_norm_placenta_tmm_filtered[, common_eqtl_placenta_ids]
+cov_rna_placenta_ordered_eqtl <- cov_rna_placenta[, common_eqtl_placenta_ids]
+
+dim(geno_t_fullqced_IDc_placenta_ordered_eqtl)
+dim(inv_norm_placenta_tmm_filtered_ordered_eqtl)
+identical(colnames(inv_norm_placenta_tmm_filtered_ordered_eqtl), colnames(geno_t_fullqced_IDc_placenta_ordered_eqtl))
+identical(colnames(inv_norm_placenta_tmm_filtered_ordered_eqtl), colnames(cov_rna_placenta_ordered_eqtl))
+```
+
+save
+```{r}
+# rna
+save(inv_norm_placenta_tmm_filtered_ordered_eqtl, file = here("02_Data/prepared", "inv_norm_placenta_tmm_filtered_ordered_eqtl.Rdata"))
+write.table(inv_norm_placenta_tmm_filtered_ordered_eqtl, file = here("02_Data/prepared", "inv_norm_placenta_tmm_filtered_ordered_eqtl.txt"), sep = "\t", row.names = TRUE, quote = FALSE)
+```
+
+```{r}
+# genotypes
+save(geno_t_fullqced_IDc_placenta_ordered_eqtl, file = here("02_Data/prepared", "geno_t_fullqced_IDc_placenta_ordered_eqtl.Rdata"))
+write.table(geno_t_fullqced_IDc_placenta_ordered_eqtl, file = here("02_Data/prepared", "geno_t_fullqced_IDc_placenta_ordered_eqtl.txt"), sep = "\t", row.names = TRUE, quote = FALSE)
+```
+
+```{r}
+# covariates
+save(cov_rna_placenta_ordered_eqtl, file = here("02_Data/prepared", "cov_rna_placenta_ordered_eqtl.Rdata"))
+write.table(cov_rna_placenta_ordered_eqtl, file = here("02_Data/prepared", "cov_rna_placenta_ordered_eqtl.txt"), sep = "\t", row.names = TRUE, quote = FALSE)
+```
+
+```{r}
+save(common_eqtl_placenta_ids, file = here("02_Data/prepared", "common_eqtl_placenta_ids.Rdata"))
+```
+
+### cvs
+```{r}
+common_eqtl_cvs_ids <- Reduce(intersect, list(colnames(inv_norm_cvs_tmm_filtered), colnames(geno_t_fullqced_IDc), colnames(cov_rna_cvs)))
+length(common_eqtl_cvs_ids)
+```
+
+```{r}
+geno_t_fullqced_IDc_cvs_ordered_eqtl <- geno_t_fullqced_IDc[, common_eqtl_cvs_ids]
+inv_norm_cvs_tmm_filtered_ordered_eqtl <- inv_norm_cvs_tmm_filtered[, common_eqtl_cvs_ids]
+cov_rna_cvs_ordered_eqtl <- cov_rna_cvs[, common_eqtl_cvs_ids]
+
+dim(geno_t_fullqced_IDc_cvs_ordered_eqtl)
+dim(inv_norm_cvs_tmm_filtered_ordered_eqtl)
+identical(colnames(inv_norm_cvs_tmm_filtered_ordered_eqtl), colnames(geno_t_fullqced_IDc_cvs_ordered_eqtl))
+identical(colnames(inv_norm_cvs_tmm_filtered_ordered_eqtl), colnames(cov_rna_cvs_ordered_eqtl))
+```
+
+save
+```{r}
+# rna
+save(inv_norm_cvs_tmm_filtered_ordered_eqtl, file = here("02_Data/prepared", "inv_norm_cvs_tmm_filtered_ordered_eqtl.Rdata"))
+write.table(inv_norm_cvs_tmm_filtered_ordered_eqtl, file = here("02_Data/prepared", "inv_norm_cvs_tmm_filtered_ordered_eqtl.txt"), sep = "\t", row.names = TRUE, quote = FALSE)
+```
+
+```{r}
+# genotypes
+save(geno_t_fullqced_IDc_cvs_ordered_eqtl, file = here("02_Data/prepared", "geno_t_fullqced_IDc_cvs_ordered_eqtl.Rdata"))
+write.table(geno_t_fullqced_IDc_cvs_ordered_eqtl, file = here("02_Data/prepared", "geno_t_fullqced_IDc_cvs_ordered_eqtl.txt"), sep = "\t", row.names = TRUE, quote = FALSE)
+```
+
+```{r}
+# covariates
+save(cov_rna_cvs_ordered_eqtl, file = here("02_Data/prepared", "cov_rna_cvs_ordered_eqtl.Rdata"))
+write.table(cov_rna_cvs_ordered_eqtl, file = here("02_Data/prepared", "cov_rna_cvs_ordered_eqtl.txt"), sep = "\t", row.names = TRUE, quote = FALSE)
+```
+
+```{r}
+save(common_eqtl_cvs_ids, file = here("02_Data/prepared", "common_eqtl_cvs_ids.Rdata"))
+```
+
+### placenta and cvs
+```{r}
+common_eqtl_samples_cvs_placenta <- intersect(common_eqtl_cvs_ids, common_eqtl_placenta_ids)
+length(common_eqtl_samples_cvs_placenta)
+```
+
+```{r}
+geno_t_fullqced_IDc_placenta_ordered_eqtl_common_cp <- geno_t_fullqced_IDc[, common_eqtl_samples_cvs_placenta]
+inv_norm_placenta_tmm_filtered_ordered_eqtl_common_cp <- inv_norm_placenta_tmm_filtered[, common_eqtl_samples_cvs_placenta]
+cov_rna_placenta_ordered_eqtl_common_cp <- cov_rna_placenta[, common_eqtl_samples_cvs_placenta]
+
+dim(geno_t_fullqced_IDc_placenta_ordered_eqtl_common_cp)
+dim(inv_norm_placenta_tmm_filtered_ordered_eqtl_common_cp)
+identical(colnames(inv_norm_placenta_tmm_filtered_ordered_eqtl_common_cp), colnames(geno_t_fullqced_IDc_placenta_ordered_eqtl_common_cp))
+identical(colnames(inv_norm_placenta_tmm_filtered_ordered_eqtl_common_cp), colnames(cov_rna_placenta_ordered_eqtl_common_cp))
+```
+
+```{r}
+geno_t_fullqced_IDc_cvs_ordered_eqtl_common_cp <- geno_t_fullqced_IDc[, common_eqtl_samples_cvs_placenta]
+inv_norm_cvs_tmm_filtered_ordered_eqtl_common_cp <- inv_norm_cvs_tmm_filtered[, common_eqtl_samples_cvs_placenta]
+cov_rna_cvs_ordered_eqtl_common_cp <- cov_rna_cvs[, common_eqtl_samples_cvs_placenta]
+
+dim(geno_t_fullqced_IDc_cvs_ordered_eqtl_common_cp)
+dim(inv_norm_cvs_tmm_filtered_ordered_eqtl_common_cp)
+identical(colnames(inv_norm_cvs_tmm_filtered_ordered_eqtl_common_cp), colnames(geno_t_fullqced_IDc_cvs_ordered_eqtl_common_cp))
+identical(colnames(inv_norm_cvs_tmm_filtered_ordered_eqtl_common_cp), colnames(cov_rna_cvs_ordered_eqtl_common_cp))
+```
+
+save
+```{r}
+# rna
+save(inv_norm_placenta_tmm_filtered_ordered_eqtl_common_cp, file = here("02_Data/prepared", "inv_norm_placenta_tmm_filtered_ordered_eqtl_common_cp.Rdata"))
+write.table(inv_norm_placenta_tmm_filtered_ordered_eqtl_common_cp, file = here("02_Data/prepared", "inv_norm_placenta_tmm_filtered_ordered_eqtl_common_cp.txt"), sep = "\t", row.names = TRUE, quote = FALSE)
+
+save(inv_norm_cvs_tmm_filtered_ordered_eqtl_common_cp, file = here("02_Data/prepared", "inv_norm_cvs_tmm_filtered_ordered_eqtl_common_cp.Rdata"))
+write.table(inv_norm_cvs_tmm_filtered_ordered_eqtl_common_cp, file = here("02_Data/prepared", "inv_norm_cvs_tmm_filtered_ordered_eqtl_common_cp.txt"), sep = "\t", row.names = TRUE, quote = FALSE)
+```
+
+```{r}
+# genotypes
+save(geno_t_fullqced_IDc_placenta_ordered_eqtl_common_cp, file = here("02_Data/prepared", "geno_t_fullqced_IDc_placenta_ordered_eqtl_common_cp.Rdata"))
+write.table(geno_t_fullqced_IDc_placenta_ordered_eqtl_common_cp, file = here("02_Data/prepared", "geno_t_fullqced_IDc_placenta_ordered_eqtl_common_cp.txt"), sep = "\t", row.names = TRUE, quote = FALSE)
+
+save(geno_t_fullqced_IDc_cvs_ordered_eqtl_common_cp, file = here("02_Data/prepared", "geno_t_fullqced_IDc_cvs_ordered_eqtl_common_cp.Rdata"))
+write.table(geno_t_fullqced_IDc_cvs_ordered_eqtl_common_cp, file = here("02_Data/prepared", "geno_t_fullqced_IDc_cvs_ordered_eqtl_common_cp.txt"), sep = "\t", row.names = TRUE, quote = FALSE)
+```
+
+```{r}
+# covariates
+save(cov_rna_placenta_ordered_eqtl_common_cp, file = here("02_Data/prepared", "cov_rna_placenta_ordered_eqtl_common_cp.Rdata"))
+write.table(cov_rna_placenta_ordered_eqtl_common_cp, file = here("02_Data/prepared", "cov_rna_placenta_ordered_eqtl_common_cp.txt"), sep = "\t", row.names = TRUE, quote = FALSE)
+
+save(cov_rna_cvs_ordered_eqtl_common_cp, file = here("02_Data/prepared", "cov_rna_cvs_ordered_eqtl_common_cp.Rdata"))
+write.table(cov_rna_cvs_ordered_eqtl_common_cp, file = here("02_Data/prepared", "cov_rna_cvs_ordered_eqtl_common_cp.txt"), sep = "\t", row.names = TRUE, quote = FALSE)
+```
+
+```{r}
+save(common_eqtl_samples_cvs_placenta, file = here("02_Data/prepared", "common_eqtl_samples_cvs_placenta.Rdata"))
+```
+
+#### common probes
+```{r}
+length(common_genes_placenta_cvs)
+```
+
+genotypes are the same
+covariates are the same
+
+```{r}
+inv_norm_placenta_tmm_filtered_ordered_eqtl_common_cp_and_probes <- inv_norm_placenta_tmm_filtered[common_genes_placenta_cvs, common_eqtl_samples_cvs_placenta]
+
+dim(inv_norm_placenta_tmm_filtered_ordered_eqtl_common_cp_and_probes)
+identical(colnames(inv_norm_placenta_tmm_filtered_ordered_eqtl_common_cp_and_probes), colnames(geno_t_fullqced_IDc_placenta_ordered_eqtl_common_cp))
+identical(colnames(inv_norm_placenta_tmm_filtered_ordered_eqtl_common_cp_and_probes), colnames(cov_rna_placenta_ordered_eqtl_common_cp))
+```
+
+```{r}
+inv_norm_cvs_tmm_filtered_ordered_eqtl_common_cp_and_probes <- inv_norm_cvs_tmm_filtered[common_genes_placenta_cvs, common_eqtl_samples_cvs_placenta]
+
+dim(inv_norm_cvs_tmm_filtered_ordered_eqtl_common_cp_and_probes)
+identical(colnames(inv_norm_cvs_tmm_filtered_ordered_eqtl_common_cp_and_probes), colnames(geno_t_fullqced_IDc_cvs_ordered_eqtl_common_cp))
+identical(colnames(inv_norm_cvs_tmm_filtered_ordered_eqtl_common_cp_and_probes), colnames(cov_rna_cvs_ordered_eqtl_common_cp))
+```
+
+save
+```{r}
+# rna
+save(inv_norm_placenta_tmm_filtered_ordered_eqtl_common_cp_and_probes, file = here("02_Data/prepared", "inv_norm_placenta_tmm_filtered_ordered_eqtl_common_cp_and_probes.Rdata"))
+write.table(inv_norm_placenta_tmm_filtered_ordered_eqtl_common_cp_and_probes, file = here("02_Data/prepared", "inv_norm_placenta_tmm_filtered_ordered_eqtl_common_cp_and_probes.txt"), sep = "\t", row.names = TRUE, quote = FALSE)
+
+save(inv_norm_cvs_tmm_filtered_ordered_eqtl_common_cp_and_probes, file = here("02_Data/prepared", "inv_norm_cvs_tmm_filtered_ordered_eqtl_common_cp_and_probes.Rdata"))
+write.table(inv_norm_cvs_tmm_filtered_ordered_eqtl_common_cp_and_probes, file = here("02_Data/prepared", "inv_norm_cvs_tmm_filtered_ordered_eqtl_common_cp_and_probes.txt"), sep = "\t", row.names = TRUE, quote = FALSE)
+```
+
+#### common probes & standardized
+```{r}
+load(here("02_Data/prepared", "inv_norm_placenta_tmm_filtered_ordered_eqtl_common_cp_and_probes.Rdata"))
+load(here("02_Data/prepared", "inv_norm_cvs_tmm_filtered_ordered_eqtl_common_cp_and_probes.Rdata"))
+
+load(here("02_Data/prepared", "cov_rna_placenta_ordered_eqtl_common_cp.Rdata"))
+load(here("02_Data/prepared", "cov_rna_cvs_ordered_eqtl_common_cp.Rdata"))
+
+load(here("02_Data/prepared", "geno_t_fullqced_IDc_placenta_ordered_eqtl_common_cp.Rdata"))
+load(here("02_Data/prepared", "geno_t_fullqced_IDc_cvs_ordered_eqtl_common_cp.Rdata"))
+```
+
+```{r}
+scaled_inv_norm_placenta_tmm_filtered_ordered_eqtl_common_cp_and_probes <- t(scale(t(inv_norm_placenta_tmm_filtered_ordered_eqtl_common_cp_and_probes)))
+scaled_inv_norm_cvs_tmm_filtered_ordered_eqtl_common_cp_and_probes<- t(scale(t(inv_norm_cvs_tmm_filtered_ordered_eqtl_common_cp_and_probes)))
+
+scaled_cov_rna_placenta_ordered_eqtl_common_cp <- t(scale(t(cov_rna_placenta_ordered_eqtl_common_cp)))
+scaled_cov_rna_cvs_ordered_eqtl_common_cp <- t(scale(t(cov_rna_placenta_ordered_eqtl_common_cp)))
+
+scaled_geno_t_fullqced_IDc_placenta_ordered_eqtl_common_cp <- t(scale(t(geno_t_fullqced_IDc_placenta_ordered_eqtl_common_cp)))
+scaled_geno_t_fullqced_IDc_cvs_ordered_eqtl_common_cp <- t(scale(t(geno_t_fullqced_IDc_cvs_ordered_eqtl_common_cp)))
+```
+
+```{r}
+save(scaled_inv_norm_placenta_tmm_filtered_ordered_eqtl_common_cp_and_probes, file = here("02_Data/prepared", "scaled_inv_norm_placenta_tmm_filtered_ordered_eqtl_common_cp_and_probes.Rdata"))
+write.table(scaled_inv_norm_placenta_tmm_filtered_ordered_eqtl_common_cp_and_probes, file = here("02_Data/prepared", "scaled_inv_norm_placenta_tmm_filtered_ordered_eqtl_common_cp_and_probes.txt"), sep = "\t", row.names = TRUE, quote = FALSE)
+
+save(scaled_inv_norm_cvs_tmm_filtered_ordered_eqtl_common_cp_and_probes, file = here("02_Data/prepared", "scaled_inv_norm_cvs_tmm_filtered_ordered_eqtl_common_cp_and_probes.Rdata"))
+write.table(scaled_inv_norm_cvs_tmm_filtered_ordered_eqtl_common_cp_and_probes, file = here("02_Data/prepared", "scaled_inv_norm_cvs_tmm_filtered_ordered_eqtl_common_cp_and_probes.txt"), sep = "\t", row.names = TRUE, quote = FALSE)
+
+save(scaled_cov_rna_placenta_ordered_eqtl_common_cp, file = here("02_Data/prepared", "scaled_cov_rna_placenta_ordered_eqtl_common_cp.Rdata"))
+write.table(scaled_cov_rna_placenta_ordered_eqtl_common_cp, file = here("02_Data/prepared", "scaled_cov_rna_placenta_ordered_eqtl_common_cp.txt"), sep = "\t", row.names = TRUE, quote = FALSE)
+save(scaled_cov_rna_cvs_ordered_eqtl_common_cp, file = here("02_Data/prepared", "scaled_cov_rna_cvs_ordered_eqtl_common_cp.Rdata"))
+write.table(scaled_cov_rna_cvs_ordered_eqtl_common_cp, file = here("02_Data/prepared", "scaled_cov_rna_cvs_ordered_eqtl_common_cp.txt"), sep = "\t", row.names = TRUE, quote = FALSE)
+
+save(scaled_geno_t_fullqced_IDc_placenta_ordered_eqtl_common_cp, file = here("02_Data/prepared", "scaled_geno_t_fullqced_IDc_placenta_ordered_eqtl_common_cp.Rdata"))
+write.table(scaled_geno_t_fullqced_IDc_placenta_ordered_eqtl_common_cp, file = here("02_Data/prepared", "scaled_geno_t_fullqced_IDc_placenta_ordered_eqtl_common_cp.txt"), sep = "\t", row.names = TRUE, quote = FALSE)
+
+save(scaled_geno_t_fullqced_IDc_cvs_ordered_eqtl_common_cp, file = here("02_Data/prepared", "scaled_geno_t_fullqced_IDc_cvs_ordered_eqtl_common_cp.Rdata"))
+write.table(scaled_geno_t_fullqced_IDc_cvs_ordered_eqtl_common_cp, file = here("02_Data/prepared", "scaled_geno_t_fullqced_IDc_cvs_ordered_eqtl_common_cp.txt"), sep = "\t", row.names = TRUE, quote = FALSE)
+```
+
+## meQTLs (methylation, genotypes)
+### placenta
+
+```{r}
+common_meqtl_placenta_ids <- Reduce(intersect, list(colnames(methylation_M_placenta_filtered), colnames(geno_t_fullqced_IDc), colnames(cov_meth_placenta)))
+length(common_meqtl_placenta_ids)
+```
+
+```{r}
+geno_t_fullqced_IDc_placenta_ordered_meqtl <- geno_t_fullqced_IDc[, common_meqtl_placenta_ids]
+methylation_M_placenta_filtered_ordered_meqtl <- methylation_M_placenta_filtered[, common_meqtl_placenta_ids]
+cov_meth_placenta_ordered_meqtl <- cov_meth_placenta[, common_meqtl_placenta_ids]
+
+dim(geno_t_fullqced_IDc_placenta_ordered_meqtl)
+dim(methylation_M_placenta_filtered_ordered_meqtl)
+identical(colnames(methylation_M_placenta_filtered_ordered_meqtl), colnames(geno_t_fullqced_IDc_placenta_ordered_meqtl))
+identical(colnames(cov_meth_placenta_ordered_meqtl), colnames(methylation_M_placenta_filtered_ordered_meqtl))
+```
+
+save
+```{r}
+# methylation
+save(methylation_M_placenta_filtered_ordered_meqtl, file = here("02_Data/prepared", "methylation_M_placenta_filtered_ordered_meqtl.Rdata"))
+write.table(methylation_M_placenta_filtered_ordered_meqtl, file = here("02_Data/prepared", "methylation_M_placenta_filtered_ordered_meqtl.txt"), sep = "\t", row.names = TRUE, quote = FALSE)
+```
+
+```{r}
+# genotypes
+save(geno_t_fullqced_IDc_placenta_ordered_meqtl, file = here("02_Data/prepared", "geno_t_fullqced_IDc_placenta_ordered_meqtl.Rdata"))
+write.table(geno_t_fullqced_IDc_placenta_ordered_meqtl, file = here("02_Data/prepared", "geno_t_fullqced_IDc_placenta_ordered_meqtl.txt"), sep = "\t", row.names = TRUE, quote = FALSE)
+```
+
+```{r}
+# covariates
+save(cov_meth_placenta_ordered_meqtl, file = here("02_Data/prepared", "cov_meth_placenta_ordered_meqtl.Rdata"))
+write.table(cov_meth_placenta_ordered_meqtl, file = here("02_Data/prepared", "cov_meth_placenta_ordered_meqtl.txt"), sep = "\t", row.names = TRUE, quote = FALSE)
+```
+
+```{r}
+save(common_meqtl_placenta_ids, file = here("02_Data/prepared", "common_meqtl_placenta_ids.Rdata"))
+```
+
+### cvs
+
+```{r}
+common_meqtl_cvs_ids <- Reduce(intersect, list(colnames(methylation_M_cvs_filtered), colnames(geno_t_fullqced_IDc), colnames(cov_meth_cvs)))
+length(common_meqtl_cvs_ids)
+```
+
+```{r}
+geno_t_fullqced_IDc_cvs_ordered_meqtl <- geno_t_fullqced_IDc[, common_meqtl_cvs_ids]
+methylation_M_cvs_filtered_ordered_meqtl <- methylation_M_cvs_filtered[, common_meqtl_cvs_ids]
+cov_meth_cvs_ordered_meqtl <- cov_meth_cvs[, common_meqtl_cvs_ids]
+
+dim(geno_t_fullqced_IDc_cvs_ordered_meqtl)
+dim(methylation_M_cvs_filtered_ordered_meqtl)
+identical(colnames(methylation_M_cvs_filtered_ordered_meqtl), colnames(geno_t_fullqced_IDc_cvs_ordered_meqtl))
+identical(colnames(cov_meth_cvs_ordered_meqtl), colnames(methylation_M_cvs_filtered_ordered_meqtl))
+```
+
+save
+```{r}
+# methylation
+save(methylation_M_cvs_filtered_ordered_meqtl, file = here("02_Data/prepared", "methylation_M_cvs_filtered_ordered_meqtl.Rdata"))
+write.table(methylation_M_cvs_filtered_ordered_meqtl, file = here("02_Data/prepared", "methylation_M_cvs_filtered_ordered_meqtl.txt"), sep = "\t", row.names = TRUE, quote = FALSE)
+```
+
+```{r}
+# genotypes
+save(geno_t_fullqced_IDc_cvs_ordered_meqtl, file = here("02_Data/prepared", "geno_t_fullqced_IDc_cvs_ordered_meqtl.Rdata"))
+write.table(geno_t_fullqced_IDc_cvs_ordered_meqtl, file = here("02_Data/prepared", "geno_t_fullqced_IDc_cvs_ordered_meqtl.txt"), sep = "\t", row.names = TRUE, quote = FALSE)
+```
+
+```{r}
+# covariates
+save(cov_meth_cvs_ordered_meqtl, file = here("02_Data/prepared", "cov_meth_cvs_ordered_meqtl.Rdata"))
+write.table(cov_meth_cvs_ordered_meqtl, file = here("02_Data/prepared", "cov_meth_cvs_ordered_meqtl.txt"), sep = "\t", row.names = TRUE, quote = FALSE)
+```
+
+```{r}
+save(common_meqtl_cvs_ids, file = here("02_Data/prepared", "common_meqtl_cvs_ids.Rdata"))
+```
+
+### placenta and cvs
+```{r}
+common_meqtl_samples_cvs_placenta <- intersect(common_meqtl_cvs_ids, common_meqtl_placenta_ids)
+length(common_meqtl_samples_cvs_placenta)
+```
+
+```{r}
+geno_t_fullqced_IDc_placenta_ordered_meqtl_common_cp <- geno_t_fullqced_IDc[, common_meqtl_samples_cvs_placenta]
+methylation_M_placenta_filtered_ordered_meqtl_common_cp <- methylation_M_placenta_filtered[, common_meqtl_samples_cvs_placenta]
+cov_meth_placenta_ordered_meqtl_common_cp <- cov_meth_placenta[, common_meqtl_samples_cvs_placenta]
+
+dim(geno_t_fullqced_IDc_placenta_ordered_meqtl_common_cp)
+dim(methylation_M_placenta_filtered_ordered_meqtl_common_cp)
+identical(colnames(methylation_M_placenta_filtered_ordered_meqtl_common_cp), colnames(geno_t_fullqced_IDc_placenta_ordered_meqtl_common_cp))
+identical(colnames(methylation_M_placenta_filtered_ordered_meqtl_common_cp), colnames(cov_meth_placenta_ordered_meqtl_common_cp))
+```
+
+```{r}
+geno_t_fullqced_IDc_cvs_ordered_meqtl_common_cp <- geno_t_fullqced_IDc[, common_meqtl_samples_cvs_placenta]
+methylation_M_cvs_filtered_ordered_meqtl_common_cp <- methylation_M_cvs_filtered[, common_meqtl_samples_cvs_placenta]
+cov_meth_cvs_ordered_meqtl_common_cp <- cov_meth_cvs[, common_meqtl_samples_cvs_placenta]
+
+dim(geno_t_fullqced_IDc_cvs_ordered_meqtl_common_cp)
+dim(methylation_M_cvs_filtered_ordered_meqtl_common_cp)
+identical(colnames(methylation_M_cvs_filtered_ordered_meqtl_common_cp), colnames(geno_t_fullqced_IDc_cvs_ordered_meqtl_common_cp))
+identical(colnames(methylation_M_cvs_filtered_ordered_meqtl_common_cp), colnames(cov_meth_cvs_ordered_meqtl_common_cp))
+```
+
+save
+```{r}
+# meth
+save(methylation_M_placenta_filtered_ordered_meqtl_common_cp, file = here("02_Data/prepared", "methylation_M_placenta_filtered_ordered_meqtl_common_cp.Rdata"))
+write.table(methylation_M_placenta_filtered_ordered_meqtl_common_cp, file = here("02_Data/prepared", "methylation_M_placenta_filtered_ordered_meqtl_common_cp.txt"), sep = "\t", row.names = TRUE, quote = FALSE)
+
+save(methylation_M_cvs_filtered_ordered_meqtl_common_cp, file = here("02_Data/prepared", "methylation_M_cvs_filtered_ordered_meqtl_common_cp.Rdata"))
+write.table(methylation_M_cvs_filtered_ordered_meqtl_common_cp, file = here("02_Data/prepared", "methylation_M_cvs_filtered_ordered_meqtl_common_cp.txt"), sep = "\t", row.names = TRUE, quote = FALSE)
+```
+
+```{r}
+# genotypes
+save(geno_t_fullqced_IDc_placenta_ordered_meqtl_common_cp, file = here("02_Data/prepared", "geno_t_fullqced_IDc_placenta_ordered_meqtl_common_cp.Rdata"))
+write.table(geno_t_fullqced_IDc_placenta_ordered_meqtl_common_cp, file = here("02_Data/prepared", "geno_t_fullqced_IDc_placenta_ordered_meqtl_common_cp.txt"), sep = "\t", row.names = TRUE, quote = FALSE)
+
+save(geno_t_fullqced_IDc_cvs_ordered_meqtl_common_cp, file = here("02_Data/prepared", "geno_t_fullqced_IDc_cvs_ordered_meqtl_common_cp.Rdata"))
+write.table(geno_t_fullqced_IDc_cvs_ordered_meqtl_common_cp, file = here("02_Data/prepared", "geno_t_fullqced_IDc_cvs_ordered_meqtl_common_cp.txt"), sep = "\t", row.names = TRUE, quote = FALSE)
+```
+
+```{r}
+# covariates
+save(cov_meth_placenta_ordered_meqtl_common_cp, file = here("02_Data/prepared", "cov_meth_placenta_ordered_meqtl_common_cp.Rdata"))
+write.table(cov_meth_placenta_ordered_meqtl_common_cp, file = here("02_Data/prepared", "cov_meth_placenta_ordered_meqtl_common_cp.txt"), sep = "\t", row.names = TRUE, quote = FALSE)
+
+save(cov_meth_cvs_ordered_meqtl_common_cp, file = here("02_Data/prepared", "cov_meth_cvs_ordered_meqtl_common_cp.Rdata"))
+write.table(cov_meth_cvs_ordered_meqtl_common_cp, file = here("02_Data/prepared", "cov_meth_cvs_ordered_meqtl_common_cp.txt"), sep = "\t", row.names = TRUE, quote = FALSE)
+```
+
+```{r}
+save(common_meqtl_samples_cvs_placenta, file = here("02_Data/prepared", "common_meqtl_samples_cvs_placenta.Rdata"))
+```
+
+#### common probes
+```{r}
+length(common_cpgs_placenta_cvs)
+```
+
+genotypes are the same
+covariates are the same
+
+```{r}
+methylation_M_placenta_filtered_ordered_meqtl_common_cp_and_probes <- methylation_M_placenta_filtered[common_cpgs_placenta_cvs, common_meqtl_samples_cvs_placenta]
+
+dim(methylation_M_placenta_filtered_ordered_meqtl_common_cp_and_probes)
+```
+```{r}
+methylation_M_cvs_filtered_ordered_meqtl_common_cp_and_probes <- methylation_M_cvs_filtered[common_cpgs_placenta_cvs, common_meqtl_samples_cvs_placenta]
+
+dim(methylation_M_cvs_filtered_ordered_meqtl_common_cp_and_probes)
+```
+
+save
+```{r}
+# meth
+save(methylation_M_placenta_filtered_ordered_meqtl_common_cp_and_probes, file = here("02_Data/prepared", "methylation_M_placenta_filtered_ordered_meqtl_common_cp_and_probes.Rdata"))
+write.table(methylation_M_placenta_filtered_ordered_meqtl_common_cp_and_probes, file = here("02_Data/prepared", "methylation_M_placenta_filtered_ordered_meqtl_common_cp_and_probes.txt"), sep = "\t", row.names = TRUE, quote = FALSE)
+
+save(methylation_M_cvs_filtered_ordered_meqtl_common_cp_and_probes, file = here("02_Data/prepared", "methylation_M_cvs_filtered_ordered_meqtl_common_cp_and_probes.Rdata"))
+write.table(methylation_M_cvs_filtered_ordered_meqtl_common_cp_and_probes, file = here("02_Data/prepared", "methylation_M_cvs_filtered_ordered_meqtl_common_cp_and_probes.txt"), sep = "\t", row.names = TRUE, quote = FALSE)
+```
+
+#### common probes & standardized
+```{r}
+load(here("02_Data/prepared", "methylation_M_placenta_filtered_ordered_meqtl_common_cp_and_probes.Rdata"))
+load(here("02_Data/prepared", "methylation_M_cvs_filtered_ordered_meqtl_common_cp_and_probes.Rdata"))
+
+load(here("02_Data/prepared", "cov_meth_placenta_ordered_meqtl_common_cp.Rdata"))
+load(here("02_Data/prepared", "cov_meth_cvs_ordered_meqtl_common_cp.Rdata"))
+
+load(here("02_Data/prepared", "geno_t_fullqced_IDc_placenta_ordered_meqtl_common_cp.Rdata"))
+load(here("02_Data/prepared", "geno_t_fullqced_IDc_cvs_ordered_meqtl_common_cp.Rdata"))
+```
+
+```{r}
+scaled_methylation_M_placenta_filtered_ordered_meqtl_common_cp_and_probes <- t(scale(t(methylation_M_placenta_filtered_ordered_meqtl_common_cp_and_probes)))
+scaled_methylation_M_cvs_filtered_ordered_meqtl_common_cp_and_probes <- t(scale(t(methylation_M_cvs_filtered_ordered_meqtl_common_cp_and_probes)))
+
+scaled_cov_meth_placenta_ordered_meqtl_common_cp <- t(scale(t(cov_meth_placenta_ordered_meqtl_common_cp)))
+scaled_cov_meth_cvs_ordered_meqtl_common_cp <- t(scale(t(cov_meth_cvs_ordered_meqtl_common_cp)))
+
+scaled_geno_t_fullqced_IDc_placenta_ordered_meqtl_common_cp <- t(scale(t(geno_t_fullqced_IDc_placenta_ordered_meqtl_common_cp)))
+scaled_geno_t_fullqced_IDc_cvs_ordered_meqtl_common_cp <- t(scale(t(geno_t_fullqced_IDc_cvs_ordered_meqtl_common_cp)))
+```
+
+```{r}
+save(scaled_methylation_M_placenta_filtered_ordered_meqtl_common_cp_and_probes, file = here("02_Data/prepared", "scaled_methylation_M_placenta_filtered_ordered_meqtl_common_cp_and_probes.Rdata"))
+write.table(scaled_methylation_M_placenta_filtered_ordered_meqtl_common_cp_and_probes, file = here("02_Data/prepared", "scaled_methylation_M_placenta_filtered_ordered_meqtl_common_cp_and_probes.txt"), sep = "\t", row.names = TRUE, quote = FALSE)
+
+save(scaled_methylation_M_cvs_filtered_ordered_meqtl_common_cp_and_probes, file = here("02_Data/prepared", "scaled_methylation_M_cvs_filtered_ordered_meqtl_common_cp_and_probes.Rdata"))
+write.table(scaled_methylation_M_cvs_filtered_ordered_meqtl_common_cp_and_probes, file = here("02_Data/prepared", "scaled_methylation_M_cvs_filtered_ordered_meqtl_common_cp_and_probes.txt"), sep = "\t", row.names = TRUE, quote = FALSE)
+
+save(scaled_cov_meth_placenta_ordered_meqtl_common_cp, file = here("02_Data/prepared", "scaled_cov_meth_placenta_ordered_meqtl_common_cp.Rdata"))
+write.table(scaled_cov_meth_placenta_ordered_meqtl_common_cp, file = here("02_Data/prepared", "scaled_cov_meth_placenta_ordered_meqtl_common_cp.txt"), sep = "\t", row.names = TRUE, quote = FALSE)
+
+save(scaled_cov_meth_cvs_ordered_meqtl_common_cp, file = here("02_Data/prepared", "scaled_cov_meth_cvs_ordered_meqtl_common_cp.Rdata"))
+write.table(scaled_cov_meth_cvs_ordered_meqtl_common_cp, file = here("02_Data/prepared", "scaled_cov_meth_cvs_ordered_meqtl_common_cp.txt"), sep = "\t", row.names = TRUE, quote = FALSE)
+
+save(scaled_geno_t_fullqced_IDc_placenta_ordered_meqtl_common_cp, file = here("02_Data/prepared", "scaled_geno_t_fullqced_IDc_placenta_ordered_meqtl_common_cp.Rdata"))
+write.table(scaled_geno_t_fullqced_IDc_placenta_ordered_meqtl_common_cp, file = here("02_Data/prepared", "scaled_geno_t_fullqced_IDc_placenta_ordered_meqtl_common_cp.txt"), sep = "\t", row.names = TRUE, quote = FALSE)
+
+save(scaled_geno_t_fullqced_IDc_cvs_ordered_meqtl_common_cp, file = here("02_Data/prepared", "scaled_geno_t_fullqced_IDc_cvs_ordered_meqtl_common_cp.Rdata"))
+write.table(scaled_geno_t_fullqced_IDc_cvs_ordered_meqtl_common_cp, file = here("02_Data/prepared", "scaled_geno_t_fullqced_IDc_cvs_ordered_meqtl_common_cp.txt"), sep = "\t", row.names = TRUE, quote = FALSE)
+
+```
+
+## eQTM (methylation, expression)
+### placenta
+```{r}
+common_eqtm_placenta_ids <- Reduce(intersect, list(colnames(methylation_M_placenta_filtered), colnames(inv_norm_placenta_tmm_filtered), colnames(cov_rna_placenta), colnames(cov_meth_placenta)))
+length(common_eqtm_placenta_ids)
+```
+
+```{r}
+inv_norm_placenta_tmm_filtered_ordered_eqtm <- inv_norm_placenta_tmm_filtered[, common_eqtm_placenta_ids]
+methylation_M_placenta_filtered_ordered_eqtm <- methylation_M_placenta_filtered[, common_eqtm_placenta_ids]
+cov_meth_placenta_ordered_eqtm <- cov_meth_placenta[, common_eqtm_placenta_ids]
+cov_rna_placenta_ordered_eqtm <- cov_rna_placenta[, common_eqtm_placenta_ids]
+identical(colnames(cov_meth_placenta_ordered_eqtm), colnames(cov_rna_placenta_ordered_eqtm))
+cov_placenta_ordered_eqtm <- rbind(cov_rna_placenta_ordered_eqtm[c(1), ], cov_meth_placenta_ordered_eqtm)
+rownames(cov_placenta_ordered_eqtm)[1] <- "SV1"
+
+dim(inv_norm_placenta_tmm_filtered_ordered_eqtm)
+dim(methylation_M_placenta_filtered_ordered_eqtm)
+identical(colnames(methylation_M_placenta_filtered_ordered_eqtm), colnames(inv_norm_placenta_tmm_filtered_ordered_eqtm))
+identical(colnames(cov_placenta_ordered_eqtm), colnames(methylation_M_placenta_filtered_ordered_eqtm))
+```
+
+save
+```{r}
+# methylation
+save(methylation_M_placenta_filtered_ordered_eqtm, file = here("02_Data/prepared", "methylation_M_placenta_filtered_ordered_eqtm.Rdata"))
+write.table(methylation_M_placenta_filtered_ordered_eqtm, file = here("02_Data/prepared", "methylation_M_placenta_filtered_ordered_eqtm.txt"), sep = "\t", row.names = TRUE, quote = FALSE)
+```
+
+```{r}
+# expression
+save(inv_norm_placenta_tmm_filtered_ordered_eqtm, file = here("02_Data/prepared", "inv_norm_placenta_tmm_filtered_ordered_eqtm.Rdata"))
+write.table(inv_norm_placenta_tmm_filtered_ordered_eqtm, file = here("02_Data/prepared", "inv_norm_placenta_tmm_filtered_ordered_eqtm.txt"), sep = "\t", row.names = TRUE, quote = FALSE)
+```
+
+```{r}
+# covariates
+save(cov_placenta_ordered_eqtm, file = here("02_Data/prepared", "cov_placenta_ordered_eqtm.Rdata"))
+write.table(cov_placenta_ordered_eqtm, file = here("02_Data/prepared", "cov_placenta_ordered_eqtm.txt"), sep = "\t", row.names = TRUE, quote = FALSE)
+```
+
+```{r}
+save(common_eqtm_placenta_ids, file = here("02_Data/prepared", "common_eqtm_placenta_ids.Rdata"))
+```
+
+### cvs
+```{r}
+common_eqtm_cvs_ids <- Reduce(intersect, list(colnames(methylation_M_cvs_filtered), colnames(inv_norm_cvs_tmm_filtered), colnames(cov_meth_cvs), colnames(cov_rna_cvs)))
+length(common_eqtm_cvs_ids)
+```
+
+```{r}
+inv_norm_cvs_tmm_filtered_ordered_eqtm <- inv_norm_cvs_tmm_filtered[, common_eqtm_cvs_ids]
+methylation_M_cvs_filtered_ordered_eqtm <- methylation_M_cvs_filtered[, common_eqtm_cvs_ids]
+cov_meth_cvs_ordered_eqtm <- cov_meth_cvs[, common_eqtm_cvs_ids]
+cov_rna_cvs_ordered_eqtm <- cov_rna_cvs[, common_eqtm_cvs_ids]
+identical(colnames(cov_meth_cvs_ordered_eqtm), colnames(cov_rna_cvs_ordered_eqtm))
+cov_cvs_ordered_eqtm <- rbind(cov_rna_cvs_ordered_eqtm[1, ], cov_meth_cvs_ordered_eqtm)
+rownames(cov_cvs_ordered_eqtm)[1] <- "SV1"
+
+dim(inv_norm_cvs_tmm_filtered_ordered_eqtm)
+dim(methylation_M_cvs_filtered_ordered_eqtm)
+identical(colnames(methylation_M_cvs_filtered_ordered_eqtm), colnames(inv_norm_cvs_tmm_filtered_ordered_eqtm))
+identical(colnames(cov_cvs_ordered_eqtm), colnames(methylation_M_cvs_filtered_ordered_eqtm))
+```
+
+save
+```{r}
+# methylation
+save(methylation_M_cvs_filtered_ordered_eqtm, file = here("02_Data/prepared", "methylation_M_cvs_filtered_ordered_eqtm.Rdata"))
+write.table(methylation_M_cvs_filtered_ordered_eqtm, file = here("02_Data/prepared", "methylation_M_cvs_filtered_ordered_eqtm.txt"), sep = "\t", row.names = TRUE, quote = FALSE)
+```
+
+```{r}
+# expression
+save(inv_norm_cvs_tmm_filtered_ordered_eqtm, file = here("02_Data/prepared", "inv_norm_cvs_tmm_filtered_ordered_eqtm.Rdata"))
+write.table(inv_norm_cvs_tmm_filtered_ordered_eqtm, file = here("02_Data/prepared", "inv_norm_cvs_tmm_filtered_ordered_eqtm.txt"), sep = "\t", row.names = TRUE, quote = FALSE)
+```
+
+```{r}
+# covariates
+save(cov_cvs_ordered_eqtm, file = here("02_Data/prepared", "cov_cvs_ordered_eqtm.Rdata"))
+write.table(cov_cvs_ordered_eqtm, file = here("02_Data/prepared", "cov_cvs_ordered_eqtm.txt"), sep = "\t", row.names = TRUE, quote = FALSE)
+```
+
+```{r}
+save(common_eqtm_cvs_ids, file = here("02_Data/prepared", "common_eqtm_cvs_ids.Rdata"))
+```
+
+### placenta and cvs
+```{r}
+common_eqtm_samples_cvs_placenta <- intersect(common_eqtm_cvs_ids, common_eqtm_placenta_ids)
+length(common_eqtm_samples_cvs_placenta)
+```
+```{r}
+inv_norm_placenta_tmm_filtered_ordered_eqtm_common_cp <- inv_norm_placenta_tmm_filtered[, common_eqtm_samples_cvs_placenta]
+methylation_M_placenta_filtered_ordered_eqtm_common_cp <- methylation_M_placenta_filtered[, common_eqtm_samples_cvs_placenta]
+cov_meth_placenta_ordered_eqtm_common_cp <- cov_meth_placenta[, common_eqtm_samples_cvs_placenta]
+cov_rna_placenta_ordered_eqtm_common_cp <- cov_rna_placenta[, common_eqtm_samples_cvs_placenta]
+
+identical(colnames(cov_meth_placenta_ordered_eqtm_common_cp), colnames(cov_rna_placenta_ordered_eqtm_common_cp))
+cov_placenta_ordered_eqtm_common_cp <- rbind(cov_rna_placenta_ordered_eqtm_common_cp[c(1), ], cov_meth_placenta_ordered_eqtm_common_cp)
+rownames(cov_placenta_ordered_eqtm_common_cp)[1] <- "SV1"
+
+dim(inv_norm_placenta_tmm_filtered_ordered_eqtm_common_cp)
+dim(methylation_M_placenta_filtered_ordered_eqtm_common_cp)
+identical(colnames(methylation_M_placenta_filtered_ordered_eqtm_common_cp), colnames(inv_norm_placenta_tmm_filtered_ordered_eqtm_common_cp))
+identical(colnames(cov_placenta_ordered_eqtm_common_cp), colnames(methylation_M_placenta_filtered_ordered_eqtm_common_cp))
+```
+
+```{r}
+inv_norm_cvs_tmm_filtered_ordered_eqtm_common_cp <- inv_norm_cvs_tmm_filtered[, common_eqtm_samples_cvs_placenta]
+methylation_M_cvs_filtered_ordered_eqtm_common_cp <- methylation_M_cvs_filtered[, common_eqtm_samples_cvs_placenta]
+cov_meth_cvs_ordered_eqtm_common_cp <- cov_meth_cvs[, common_eqtm_samples_cvs_placenta]
+cov_rna_cvs_ordered_eqtm_common_cp <- cov_rna_cvs[, common_eqtm_samples_cvs_placenta]
+
+identical(colnames(cov_meth_cvs_ordered_eqtm_common_cp), colnames(cov_rna_cvs_ordered_eqtm_common_cp))
+cov_cvs_ordered_eqtm_common_cp <- rbind(cov_rna_cvs_ordered_eqtm_common_cp[c(1), ], cov_meth_cvs_ordered_eqtm_common_cp)
+rownames(cov_cvs_ordered_eqtm_common_cp)[1] <- "SV1"
+
+dim(inv_norm_cvs_tmm_filtered_ordered_eqtm_common_cp)
+dim(methylation_M_cvs_filtered_ordered_eqtm_common_cp)
+identical(colnames(methylation_M_cvs_filtered_ordered_eqtm_common_cp), colnames(inv_norm_cvs_tmm_filtered_ordered_eqtm_common_cp))
+identical(colnames(cov_cvs_ordered_eqtm_common_cp), colnames(methylation_M_cvs_filtered_ordered_eqtm_common_cp))
+```
+
+save
+```{r}
+# methylation
+save(methylation_M_placenta_filtered_ordered_eqtm_common_cp, file = here("02_Data/prepared", "methylation_M_placenta_filtered_ordered_eqtm_common_cp.Rdata"))
+write.table(methylation_M_placenta_filtered_ordered_eqtm_common_cp, file = here("02_Data/prepared", "methylation_M_placenta_filtered_ordered_eqtm_common_cp.txt"), sep = "\t", row.names = TRUE, quote = FALSE)
+
+save(methylation_M_cvs_filtered_ordered_eqtm_common_cp, file = here("02_Data/prepared", "methylation_M_cvs_filtered_ordered_eqtm_common_cp.Rdata"))
+write.table(methylation_M_cvs_filtered_ordered_eqtm_common_cp, file = here("02_Data/prepared", "methylation_M_cvs_filtered_ordered_eqtm_common_cp.txt"), sep = "\t", row.names = TRUE, quote = FALSE)
+```
+
+```{r}
+# expression
+save(inv_norm_placenta_tmm_filtered_ordered_eqtm_common_cp, file = here("02_Data/prepared", "inv_norm_placenta_tmm_filtered_ordered_eqtm_common_cp.Rdata"))
+write.table(inv_norm_placenta_tmm_filtered_ordered_eqtm_common_cp, file = here("02_Data/prepared", "inv_norm_placenta_tmm_filtered_ordered_eqtm_common_cp.txt"), sep = "\t", row.names = TRUE, quote = FALSE)
+
+save(inv_norm_cvs_tmm_filtered_ordered_eqtm_common_cp, file = here("02_Data/prepared", "inv_norm_cvs_tmm_filtered_ordered_eqtm_common_cp.Rdata"))
+write.table(inv_norm_cvs_tmm_filtered_ordered_eqtm_common_cp, file = here("02_Data/prepared", "inv_norm_cvs_tmm_filtered_ordered_eqtm_common_cp.txt"), sep = "\t", row.names = TRUE, quote = FALSE)
+```
+
+```{r}
+# covariates
+save(cov_placenta_ordered_eqtm_common_cp, file = here("02_Data/prepared", "cov_placenta_ordered_eqtm_common_cp.Rdata"))
+write.table(cov_placenta_ordered_eqtm_common_cp, file = here("02_Data/prepared", "cov_placenta_ordered_eqtm_common_cp.txt"), sep = "\t", row.names = TRUE, quote = FALSE)
+
+save(cov_cvs_ordered_eqtm_common_cp, file = here("02_Data/prepared", "cov_cvs_ordered_eqtm_common_cp.Rdata"))
+write.table(cov_cvs_ordered_eqtm_common_cp, file = here("02_Data/prepared", "cov_cvs_ordered_eqtm_common_cp.txt"), sep = "\t", row.names = TRUE, quote = FALSE)
+```
+
+```{r}
+save(common_eqtm_samples_cvs_placenta, file = here("02_Data/prepared", "common_eqtm_samples_cvs_placenta.Rdata"))
+```
+
+#### common cpgs and genes
+```{r}
+length(common_cpgs_placenta_cvs)
+length(common_genes_placenta_cvs)
+```
+
+covariates are the same
+
+cpgs:
+```{r}
+methylation_M_placenta_filtered_ordered_eqtm_common_cp_and_probes <- methylation_M_placenta_filtered[common_cpgs_placenta_cvs, common_eqtm_samples_cvs_placenta]
+
+dim(methylation_M_placenta_filtered_ordered_eqtm_common_cp_and_probes)
+```
+```{r}
+methylation_M_cvs_filtered_ordered_eqtm_common_cp_and_probes <- methylation_M_cvs_filtered[common_cpgs_placenta_cvs, common_eqtm_samples_cvs_placenta]
+
+dim(methylation_M_cvs_filtered_ordered_eqtm_common_cp_and_probes)
+```
+
+genes:
+```{r}
+inv_norm_placenta_tmm_filtered_ordered_eqtm_common_cp_and_probes <- inv_norm_placenta_tmm_filtered[common_genes_placenta_cvs, common_eqtm_samples_cvs_placenta]
+
+dim(inv_norm_placenta_tmm_filtered_ordered_eqtm_common_cp_and_probes)
+```
+
+```{r}
+inv_norm_cvs_tmm_filtered_ordered_eqtm_common_cp_and_probes <- inv_norm_cvs_tmm_filtered[common_genes_placenta_cvs, common_eqtm_samples_cvs_placenta]
+
+dim(inv_norm_cvs_tmm_filtered_ordered_eqtm_common_cp_and_probes)
+```
+
+save
+```{r}
+# meth
+save(methylation_M_placenta_filtered_ordered_eqtm_common_cp_and_probes, file = here("02_Data/prepared", "methylation_M_placenta_filtered_ordered_eqtm_common_cp_and_probes.Rdata"))
+write.table(methylation_M_placenta_filtered_ordered_eqtm_common_cp_and_probes, file = here("02_Data/prepared", "methylation_M_placenta_filtered_ordered_eqtm_common_cp_and_probes.txt"), sep = "\t", row.names = TRUE, quote = FALSE)
+
+save(methylation_M_cvs_filtered_ordered_eqtm_common_cp_and_probes, file = here("02_Data/prepared", "methylation_M_cvs_filtered_ordered_eqtm_common_cp_and_probes.Rdata"))
+write.table(methylation_M_cvs_filtered_ordered_eqtm_common_cp_and_probes, file = here("02_Data/prepared", "methylation_M_cvs_filtered_ordered_eqtm_common_cp_and_probes.txt"), sep = "\t", row.names = TRUE, quote = FALSE)
+```
+
+```{r}
+# rna
+save(inv_norm_placenta_tmm_filtered_ordered_eqtm_common_cp_and_probes, file = here("02_Data/prepared", "inv_norm_placenta_tmm_filtered_ordered_eqtm_common_cp_and_probes.Rdata"))
+write.table(inv_norm_placenta_tmm_filtered_ordered_eqtm_common_cp_and_probes, file = here("02_Data/prepared", "inv_norm_placenta_tmm_filtered_ordered_eqtm_common_cp_and_probes.txt"), sep = "\t", row.names = TRUE, quote = FALSE)
+
+save(inv_norm_cvs_tmm_filtered_ordered_eqtm_common_cp_and_probes, file = here("02_Data/prepared", "inv_norm_cvs_tmm_filtered_ordered_eqtm_common_cp_and_probes.Rdata"))
+write.table(inv_norm_cvs_tmm_filtered_ordered_eqtm_common_cp_and_probes, file = here("02_Data/prepared", "inv_norm_cvs_tmm_filtered_ordered_eqtm_common_cp_and_probes.txt"), sep = "\t", row.names = TRUE, quote = FALSE)
+```
+
+#### common probes & standardized
+```{r}
+load(here("02_Data/prepared", "methylation_M_placenta_filtered_ordered_eqtm_common_cp_and_probes.Rdata"))
+load(here("02_Data/prepared", "methylation_M_cvs_filtered_ordered_eqtm_common_cp_and_probes.Rdata"))
+
+load(here("02_Data/prepared", "cov_placenta_ordered_eqtm_common_cp.Rdata"))
+load(here("02_Data/prepared", "cov_cvs_ordered_eqtm_common_cp.Rdata"))
+
+load(here("02_Data/prepared", "inv_norm_placenta_tmm_filtered_ordered_eqtm_common_cp_and_probes.Rdata"))
+load(here("02_Data/prepared", "inv_norm_cvs_tmm_filtered_ordered_eqtm_common_cp_and_probes.Rdata"))
+```
+
+```{r}
+scaled_methylation_M_placenta_filtered_ordered_eqtm_common_cp_and_probes <- t(scale(t(methylation_M_placenta_filtered_ordered_eqtm_common_cp_and_probes)))
+scaled_methylation_M_cvs_filtered_ordered_eqtm_common_cp_and_probes <- t(scale(t(methylation_M_cvs_filtered_ordered_eqtm_common_cp_and_probes)))
+
+scaled_cov_placenta_ordered_eqtm_common_cp <- t(scale(t(cov_placenta_ordered_eqtm_common_cp)))
+scaled_cov_cvs_ordered_eqtm_common_cp <- t(scale(t(cov_cvs_ordered_eqtm_common_cp)))
+
+scaled_inv_norm_placenta_tmm_filtered_ordered_eqtm_common_cp_and_probes <- t(scale(t(inv_norm_placenta_tmm_filtered_ordered_eqtm_common_cp_and_probes)))
+scaled_inv_norm_cvs_tmm_filtered_ordered_eqtm_common_cp_and_probes <- t(scale(t(inv_norm_cvs_tmm_filtered_ordered_eqtm_common_cp_and_probes)))
+```
+
+```{r}
+save(scaled_methylation_M_placenta_filtered_ordered_eqtm_common_cp_and_probes, file = here("02_Data/prepared", "scaled_methylation_M_placenta_filtered_ordered_eqtm_common_cp_and_probes.Rdata"))
+write.table(scaled_methylation_M_placenta_filtered_ordered_eqtm_common_cp_and_probes, file = here("02_Data/prepared", "scaled_methylation_M_placenta_filtered_ordered_eqtm_common_cp_and_probes.txt"), sep = "\t", row.names = TRUE, quote = FALSE)
+
+save(scaled_methylation_M_cvs_filtered_ordered_eqtm_common_cp_and_probes, file = here("02_Data/prepared", "scaled_methylation_M_cvs_filtered_ordered_eqtm_common_cp_and_probes.Rdata"))
+write.table(scaled_methylation_M_cvs_filtered_ordered_eqtm_common_cp_and_probes, file = here("02_Data/prepared", "scaled_methylation_M_cvs_filtered_ordered_eqtm_common_cp_and_probes.txt"), sep = "\t", row.names = TRUE, quote = FALSE)
+
+save(scaled_cov_placenta_ordered_eqtm_common_cp, file = here("02_Data/prepared", "scaled_cov_placenta_ordered_eqtm_common_cp.Rdata"))
+write.table(scaled_cov_placenta_ordered_eqtm_common_cp, file = here("02_Data/prepared", "scaled_cov_placenta_ordered_eqtm_common_cp.txt"), sep = "\t", row.names = TRUE, quote = FALSE)
+
+save(scaled_cov_cvs_ordered_eqtm_common_cp, file = here("02_Data/prepared", "scaled_cov_cvs_ordered_eqtm_common_cp.Rdata"))
+write.table(scaled_cov_cvs_ordered_eqtm_common_cp, file = here("02_Data/prepared", "scaled_cov_cvs_ordered_eqtm_common_cp.txt"), sep = "\t", row.names = TRUE, quote = FALSE)
+
+save(scaled_inv_norm_placenta_tmm_filtered_ordered_eqtm_common_cp_and_probes, file = here("02_Data/prepared", "scaled_inv_norm_placenta_tmm_filtered_ordered_eqtm_common_cp_and_probes.Rdata"))
+write.table(scaled_inv_norm_placenta_tmm_filtered_ordered_eqtm_common_cp_and_probes, file = here("02_Data/prepared", "scaled_inv_norm_placenta_tmm_filtered_ordered_eqtm_common_cp_and_probes.txt"), sep = "\t", row.names = TRUE, quote = FALSE)
+
+save(scaled_inv_norm_cvs_tmm_filtered_ordered_eqtm_common_cp_and_probes, file = here("02_Data/prepared", "scaled_inv_norm_cvs_tmm_filtered_ordered_eqtm_common_cp_and_probes.Rdata"))
+write.table(scaled_inv_norm_cvs_tmm_filtered_ordered_eqtm_common_cp_and_probes, file = here("02_Data/prepared", "scaled_inv_norm_cvs_tmm_filtered_ordered_eqtm_common_cp_and_probes.txt"), sep = "\t", row.names = TRUE, quote = FALSE)
+
+```
+
+
+The sample sizes are: (main analyses)  
+* eQTLs: Placenta 447 and CVS 200  
+* meQTLS: Placenta 425 and CVS 199  
+* eQTMs: Placenta 418 and CVS 194  
+

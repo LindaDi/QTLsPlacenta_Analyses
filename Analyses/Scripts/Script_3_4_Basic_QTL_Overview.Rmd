@@ -1,0 +1,329 @@
+---
+title: "Basic Analyses QTLs"
+author: Linda Dieckmann
+date: November 2022
+output: github_document
+---
+
+In this notebook we take take a look at basic characteristics of our QTLs.
+
+# load packages
+```{r, warning=FALSE}
+library(here)
+library(ggplot2)
+library(dplyr)
+library(cowplot)
+library(scales)
+library(VennDiagram)
+library(gridExtra)
+```
+
+
+If you update package(s) call 
+  renv::snapshot() 
+to save the current picture of the project.
+
+```{r}
+writeLines(capture.output(sessionInfo()), here("Analyses/Scripts/sessionInfos/", "sessionInfo_Script_3_4.txt"))
+```
+
+```{r}
+source(here("Analyses/Scripts/", "functions.R"))
+```
+
+# load data
+QTL data
+```{r}
+load(here("02_Data/QTL_Data/", "bme_eqtl_cvs_clumped.Rdata"))
+load(here("02_Data/QTL_Data/", "bme_eqtl_placenta_clumped.Rdata"))
+load(here("02_Data/QTL_Data/", "bme_meqtl_cvs_clumped.Rdata"))
+load(here("02_Data/QTL_Data/", "bme_meqtl_placenta_clumped.Rdata"))
+load(here("02_Data/MatrixEQTL_Output", "bme_eqtm_placenta.Rdata"))
+load(here("02_Data/MatrixEQTL_Output", "bme_eqtm_cvs.Rdata"))
+```
+
+barplots data
+```{r}
+load(here("02_Data/MatrixEQTL_Output", "hits_df_eqtls_placenta.Rdata"))
+load(here("02_Data/MatrixEQTL_Output", "hits_df_eqtls_cvs.Rdata"))
+load(here("02_Data/MatrixEQTL_Output", "hits_df_meqtls_placenta.Rdata"))
+load(here("02_Data/MatrixEQTL_Output", "hits_df_meqtls_cvs.Rdata"))
+load(here("02_Data/MatrixEQTL_Output", "hits_df_eqtms_placenta.Rdata"))
+load(here("02_Data/MatrixEQTL_Output", "hits_df_eqtms_cvs.Rdata"))
+```
+
+
+# Plot number QTLs and save
+Plot and save histogram plot
+
+```{r, warning=F}
+barplot_counts_eqtls_placenta <- barplot_counts_function(hits_df_eqtls_placenta, "Placenta", "clumped", colors_placenta_3levels, ylimits=c(0,136000)) + theme(plot.margin = unit(c(1, 0.5, 0.5, 1), "cm"))
+barplot_counts_eqtls_cvs <- barplot_counts_function(hits_df_eqtls_cvs, "CVS", "clumped", colors_cvs_3levels, ylimits=c(0,136000)) + theme(plot.margin = unit(c(1, 0.5, 0.5, 1), "cm"))
+barplot_counts_meqtls_placenta <- barplot_counts_function(hits_df_meqtls_placenta, "Placenta", "clumped", colors_placenta_3levels, ylimits=c(0,16200000)) + theme(plot.margin = unit(c(1, 0.5, 0.5, 1), "cm"))
+barplot_counts_meqtls_cvs <- barplot_counts_function(hits_df_meqtls_cvs, "CVS", "clumped", colors_cvs_3levels, ylimits=c(0,16200000)) + theme(plot.margin = unit(c(1, 0.5, 0.5, 1), "cm"))
+barplot_counts_eqtms_placenta <- barplot_counts_function(hits_df_eqtms_placenta, "Placenta", "BootstrapQTL", colors_placenta_3levels[-3], ylimits=c(0,17600)) + theme(plot.margin = unit(c(1, 0.5, 0.5, 1), "cm"))
+barplot_counts_eqtms_cvs <- barplot_counts_function(hits_df_eqtms_cvs, "CVS", "BootstrapQTL", colors_cvs_3levels[-3], ylimits=c(0,17600)) + theme(plot.margin = unit(c(1, 0.5, 0.5, 1), "cm"))
+```
+
+```{r}
+# first cvs, then placenta in plot
+plot_grid(barplot_counts_eqtls_cvs, barplot_counts_eqtls_placenta, barplot_counts_meqtls_cvs, barplot_counts_meqtls_placenta, barplot_counts_eqtms_cvs, barplot_counts_eqtms_placenta, ncol=2, align = "v", labels=c('a', 'b', 'c', 'd', 'e', 'f'))
+
+barplot_counts_qtls <- plot_grid(barplot_counts_eqtls_cvs, barplot_counts_eqtls_placenta, barplot_counts_meqtls_cvs, barplot_counts_meqtls_placenta, barplot_counts_eqtms_cvs, barplot_counts_eqtms_placenta, ncol=2, align = "v", labels=c('a', 'b', 'c', 'd', 'e', 'f'))
+```
+
+
+```{r}
+ggsave(here("Analyses/Results/Descriptive/", "QTL_number_overview.png"),
+barplot_counts_qtls, width=standard_width_mm_single, height=standard_height_mm, units="mm", dpi=300, scale=2)
+```
+
+
+# Proportion of positive / negative associations
+
+## eQTMs
+Placenta:
+```{r}
+prop.table(table(sign(bme_eqtm_placenta$corrected_beta)))
+```
+CVS
+```{r}
+prop.table(table(sign(bme_eqtm_cvs$corrected_beta)))
+```
+
+# Overlap between SNPs of eQTLs and meQTLs
+## Placenta
+```{r}
+eqtl_snps_placenta <- bme_eqtl_placenta_clumped$eSNPs
+meqtl_snps_placenta <- bme_meqtl_placenta_clumped$eSNPs
+
+length(intersect(eqtl_snps_placenta, meqtl_snps_placenta))
+```
+
+save as png
+```{r}
+futile.logger::flog.threshold(futile.logger::ERROR, name = "VennDiagramLogger")
+venn.diagram(
+  x = list(eqtl_snps_placenta, meqtl_snps_placenta),
+  category.names = c("eQTL SNPs", "meQTL SNPs"),
+  filename = here("Analyses/Results/Descriptive/", "snps_overlap_venn_placenta.png"),
+  output=TRUE,
+  
+  # Output features
+  imagetype="png" ,
+  height = standard_height_mm/4 , 
+  width = standard_width_mm_single , 
+  units = "mm",
+  resolution = 600,
+  compression = "lzw",
+  
+  # Circles
+  lwd = 2,
+  lty = 'blank',
+  fill = c(color_placenta_rna, color_placenta_methylation),
+  scale = FALSE,
+  euler.d = TRUE,
+   
+  # Numbers
+  cex = 1,
+  fontface = "bold",
+  fontfamily = "sans",
+  ext.text = FALSE,
+  ext.percent = c(50,50,50),
+   
+  # Set names
+  cat.cex = 1,
+  cat.fontface = "bold",
+  cat.default.pos = "text",
+  cat.pos = c(180,180),
+  cat.dist = c(0.03,0.03),
+  cat.fontfamily = "sans",
+  rotation.degree = 180
+)
+
+```
+
+```{r}
+snps_overlaps_placenta_plot <-
+venn.diagram(
+  x = list(eqtl_snps_placenta, meqtl_snps_placenta),
+  category.names = c("eQTL SNPs", "meQTL SNPs"),
+  filename = NULL,
+  output=TRUE,
+  
+  # Output features
+  imagetype="png" ,
+  height = standard_height_mm/8 , 
+  width = standard_width_mm_single/2 , 
+  units = "mm",
+  resolution = 600,
+  compression = "lzw",
+  
+  # Circles
+  lwd = 2,
+  lty = 'blank',
+  fill = c(color_placenta_rna, color_placenta_methylation),
+  scale = FALSE,
+  euler.d = TRUE,
+   
+  # Numbers
+  cex = 1,
+  #fontface = "bold",
+  fontfamily = "sans",
+  ext.text = FALSE,
+  ext.percent = c(50,50,50),
+   
+  # Set names
+  cat.cex = 1,
+  #cat.fontface = "bold",
+  cat.default.pos = "text",
+  cat.pos = c(180,180),
+  cat.dist = c(0.05,0.05),
+  cat.fontfamily = "sans",
+  rotation.degree = 180
+)
+
+```
+
+
+## CVS
+```{r}
+eqtl_snps_cvs <- bme_eqtl_cvs_clumped$eSNPs
+meqtl_snps_cvs <- bme_meqtl_cvs_clumped$eSNPs
+
+length(intersect(eqtl_snps_cvs, meqtl_snps_cvs))
+```
+
+save as png
+```{r}
+futile.logger::flog.threshold(futile.logger::ERROR, name = "VennDiagramLogger")
+venn.diagram(
+  x = list(eqtl_snps_cvs, meqtl_snps_cvs),
+  category.names = c("eQTL SNPs", "meQTL SNPs"),
+  filename = here("Analyses/Results/Descriptive/", "snps_overlap_venn_cvs.png"),
+  output=TRUE,
+  
+  # Output features
+  imagetype="png" ,
+  height = standard_height_mm/4 , 
+  width = standard_width_mm_single , 
+  units = "mm",
+  resolution = 600,
+  compression = "lzw",
+  
+  # Circles
+  lwd = 2,
+  lty = 'blank',
+  fill = c(color_cvs_rna, color_cvs_methylation),
+  scale = FALSE,
+  euler.d = TRUE,
+   
+  # Numbers
+  cex = 1,
+  fontface = "bold",
+  fontfamily = "sans",
+  ext.text = FALSE,
+  ext.percent = c(50,50,50),
+   
+  # Set names
+  cat.cex = 1,
+  cat.fontface = "bold",
+  cat.default.pos = "text",
+  cat.pos = c(180,180),
+  cat.dist = c(0.03,0.03),
+  cat.fontfamily = "sans",
+  rotation.degree = 180
+)
+
+```
+
+```{r}
+snps_overlaps_cvs_plot <-
+venn.diagram(
+  x = list(eqtl_snps_cvs, meqtl_snps_cvs),
+  category.names = c("eQTL SNPs", "meQTL SNPs"),
+  filename = NULL,
+  output=TRUE,
+  
+  # Output features
+  imagetype="png" ,
+  height = standard_height_mm/8 , 
+  width = standard_width_mm_single/2 , 
+  units = "mm",
+  resolution = 600,
+  compression = "lzw",
+  
+  # Circles
+  lwd = 2,
+  lty = 'blank',
+  fill = c(color_cvs_rna, color_cvs_methylation),
+  scale = FALSE,
+  euler.d = TRUE,
+   
+  # Numbers
+  cex = 1,
+  #fontface = "bold",
+  fontfamily = "sans",
+  ext.text = FALSE,
+  ext.percent = c(50,50,50),
+   
+  # Set names
+  cat.cex = 1,
+  #cat.fontface = "bold",
+  cat.default.pos = "text",
+  cat.pos = c(180,180),
+  cat.dist = c(0.05,0.05),
+  cat.fontfamily = "sans",
+  rotation.degree = 180
+)
+
+```
+
+```{r}
+snps_overlaps <- 
+  grid.arrange(arrangeGrob(gTree(children=snps_overlaps_placenta_plot), bottom = "Placenta", top = textGrob(expression(bold("A")), x = unit(0.02, "npc"), y   = unit(0.98, "npc"), just=c("left","top"))), arrangeGrob(gTree(children=snps_overlaps_cvs_plot), bottom="CVS", top = textGrob(expression(bold("B")), x = unit(0.02, "npc"), y   = unit(0.98, "npc"), just=c("left","top"))), ncol=2)
+#, gp=gpar(col="black", fontsize=standard_textsize)
+```
+
+```{r}
+ggsave(here("Analyses/Results/Descriptive/", "SNP_overlap_venn.pdf"),
+snps_overlaps, width=standard_width_mm_single, height=standard_height_mm/6, units="mm", dpi=600, scale=2, device = cairo_pdf)
+```
+
+# Overlap between Genes of eQTLs and eQTMs
+## Placenta
+```{r}
+eqtl_genes_placenta <- bme_eqtl_placenta_clumped$eGene
+eqtm_genes_placenta <- bme_eqtm_placenta$eGene
+
+length(intersect(eqtl_genes_placenta, eqtm_genes_placenta))
+```
+
+## CVS
+```{r}
+eqtl_genes_cvs <- bme_eqtl_cvs_clumped$eGene
+eqtm_genes_cvs <- bme_eqtm_cvs$eGene
+
+length(intersect(eqtl_genes_cvs, eqtm_genes_cvs))
+```
+
+# Overlap between CpGs of meQTLs and eQTMs
+## Placenta
+```{r}
+eqtm_cpgs_placenta <- bme_eqtm_placenta$eSNPs
+meqtl_cpgs_placenta <- bme_meqtl_placenta_clumped$eGene
+
+length(intersect(eqtm_cpgs_placenta, meqtl_cpgs_placenta))
+```
+
+## CVS
+```{r}
+eqtm_cpgs_cvs <- bme_eqtm_cvs$eSNPs
+meqtl_cpgs_cvs <- bme_meqtl_cvs_clumped$eGene
+
+length(intersect(eqtm_cpgs_cvs, meqtl_cpgs_cvs))
+```
+
+
+
+

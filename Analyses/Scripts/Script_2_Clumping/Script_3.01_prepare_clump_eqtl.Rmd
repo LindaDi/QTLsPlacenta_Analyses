@@ -1,0 +1,64 @@
+---
+title: "Clumping preparation eQTLs"
+output: html_document
+date: "2022"
+---
+
+prepare files for clumping 
+
+# load packages
+```{r}
+library(here)
+library(data.table)
+library(dplyr)
+library(tibble)
+library(tidyr)
+```
+
+# load functions
+```{r}
+source(here("03_Code_Scripts", "functions.R"))
+```
+
+# load data
+
+QTL analyses results - BootstrapQTL
+
+```{r}
+# eQTL
+
+# Bootstrap QTL (data frame with results for significant hits)
+load(here("02_Data/MatrixEQTL_Output", "bme_eqtl_placenta.Rdata"))
+load(here("02_Data/MatrixEQTL_Output", "bme_eqtl_cvs.Rdata"))
+```
+
+# eQTLs
+
+## placenta
+
+### for clumping (BootstrapQTL Results)
+for every gene (690 unique genes) table with its associated SNPs and p-values
+```{r}
+unique_eGenes_placenta <- unique(bme_eqtl_placenta$eGene)
+```
+
+```{r}
+for (genename in unique_eGenes_placenta) {
+  write.table(assign(paste0("clump_", genename), setNames(bme_eqtl_placenta[bme_eqtl_placenta$eGene == genename, c("eSNPs", "eSNP_pval")], c("SNP", "P"))), here("02_Data/clumping/placenta-eqtl_filesforclump", paste0("clump_", genename, ".txt")), row.names=FALSE, quote=FALSE)
+}
+```
+
+## cvs
+
+#### for clumping (BootstrapQTL Results)
+for every gene (12 unique genes) table with its associated SNPs and p-values
+```{r}
+unique_eGenes_cvs <- unique(bme_eqtl_cvs$eGene)
+```
+
+```{r}
+for (genename in unique_eGenes_cvs) {
+  write.table(assign(paste0("clump_", genename), setNames(bme_eqtl_cvs[bme_eqtl_cvs$eGene == genename, c("eSNPs", "eSNP_pval")], c("SNP", "P"))), here("02_Data/clumping/cvs-eqtl_filesforclump", paste0("clump_", genename, ".txt")), row.names=FALSE, quote=FALSE)
+}
+```
+

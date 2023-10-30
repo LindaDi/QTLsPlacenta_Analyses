@@ -1,0 +1,434 @@
+---
+title: "CVS vs Placenta - eQTLs"
+author: Linda Dieckmann
+date: January 2023
+output: github_document
+---
+
+In this notebook we compare QTLs between CVS and birth placenta.
+
+# load packages
+```{r, warning=FALSE}
+library(here)
+library(readxl)
+library(dplyr)
+library(plotrix)
+library(psych)
+library(ineq)
+```
+
+If you update package(s) call 
+  renv::snapshot() 
+to save the current picture of the project.
+
+```{r}
+writeLines(capture.output(sessionInfo()), here("Analyses/Scripts/sessionInfos/", "sessionInfo_Script_4_1.txt"))
+```
+
+```{r}
+source(here("Analyses/Scripts/", "functions.R"))
+```
+
+# load data
+## QTL data 
+
+(only final)
+```{r}
+load(here("02_Data/QTL_Data/", "bme_eqtl_cvs_clumped.Rdata"))
+load(here("02_Data/QTL_Data/", "bme_eqtl_placenta_clumped.Rdata"))
+```
+
+(complete)
+```{r}
+load(here("Analyses/Results/Descriptive", "eQTLs_placenta_statistics.Rdata"))
+load(here("Analyses/Results/Descriptive", "eQTLs_cvs_statistics.Rdata"))
+```
+
+common cvs-placenta eqtls in final
+```{r}
+load(here("02_Data/CVS_Placenta/", "common_snp_gene_placenta_cvs.Rdata"))
+```
+
+
+## genotypes
+```{r}
+load(here("02_Data/raw/", "geno_info.Rdata")) 
+```
+
+```{r}
+load(here("02_Data/prepared", "geno_t_fullqced_IDc_cvs_ordered_eqtl.Rdata"))
+load(here("02_Data/prepared", "geno_t_fullqced_IDc_placenta_ordered_eqtl.Rdata"))
+```
+
+## expression data
+
+```{r}
+load(here("02_Data/prepared", "inv_norm_cvs_tmm_filtered_ordered_eqtl.Rdata"))
+load(here("02_Data/prepared", "inv_norm_placenta_tmm_filtered_ordered_eqtl.Rdata"))
+```
+
+```{r}
+# I also load the counts which are only tmm normalized (but careful, these are not filtered!) 
+load(here("02_Data/raw", "tmm_placenta.Rdata"))
+load(here("02_Data/raw", "tmm_cvs.Rdata"))
+```
+
+adapt columns and genes
+```{r}
+tmm_placenta_final <- tmm_placenta[rownames(tmm_placenta)%in% rownames(inv_norm_placenta_tmm_filtered_ordered_eqtl), colnames(tmm_placenta) %in% colnames(inv_norm_placenta_tmm_filtered_ordered_eqtl)]
+tmm_cvs_final <- tmm_cvs[rownames(tmm_cvs)%in% rownames(inv_norm_cvs_tmm_filtered_ordered_eqtl), colnames(tmm_cvs) %in% colnames(inv_norm_cvs_tmm_filtered_ordered_eqtl)]
+```
+
+confounders
+```{r}
+load(here("02_Data/prepared", "cov_rna_placenta_ordered_eqtl.Rdata"))
+load(here("02_Data/prepared", "cov_rna_cvs_ordered_eqtl.Rdata"))
+```
+
+## overlapping sample names
+```{r}
+load(here("02_Data/prepared", "common_eqtl_samples_cvs_placenta.Rdata"))
+```
+
+# comparative analyses cvs vs birth placenta
+
+We need associations that can be found in both cvs and birth placenta. For this, we use the unclumped results.
+
+*subset to those among bootstrapqtl results*
+```{r}
+eQTLs_placenta_sig <- eQTLs_placenta_statistics[eQTLs_placenta_statistics$inboot == "yes", ]
+cat(nrow(eQTLs_placenta_sig), "associations")
+```
+```{r}
+eQTLs_cvs_sig <- eQTLs_cvs_statistics[eQTLs_cvs_statistics$inboot == "yes", ]
+cat(nrow(eQTLs_cvs_sig), "associations")
+```
+
+*combine placenta and cvs*
+
+*significant, but unclumped results*
+```{r}
+eQTLs_placenta_cvs <- merge(eQTLs_placenta_sig, eQTLs_cvs_sig, by = c("eSNPs", "eGene"))
+cat(nrow(eQTLs_placenta_cvs), "associations, which are among final but unclumped results in both CVS and Placenta")
+```
+
+```{r}
+colnames(eQTLs_placenta_cvs) <- gsub('.x', '.placenta', colnames(eQTLs_placenta_cvs))
+colnames(eQTLs_placenta_cvs) <- gsub('.y', '.cvs', colnames(eQTLs_placenta_cvs))
+```
+
+```{r}
+effects_eQTLs_placenta_cvs <- eQTLs_placenta_cvs[ ,c("eSNPs", "eGene", "beta.placenta", "se_beta.placenta", "corrected_beta.placenta", "beta.cvs", "se_beta.cvs", "corrected_beta.cvs")]
+```
+
+```{r}
+save(eQTLs_placenta_cvs, file = here("02_Data/CVS_Placenta/", "eQTLs_placenta_cvs.Rdata"))
+```
+
+```{r}
+cat(length(unique(eQTLs_placenta_cvs$eGene)), "unique genes & ")
+cat(length(unique(eQTLs_placenta_cvs$eSNPs)), "unqiue SNPs")
+```
+
+...combine all
+```{r}
+eQTLs_placenta_cvs_all <- merge(eQTLs_placenta_statistics, eQTLs_cvs_statistics, by = c("eSNPs", "eGene"))
+cat(nrow(eQTLs_placenta_cvs_all), "associations, which are among results in both CVS and Placenta")
+```
+```{r}
+colnames(eQTLs_placenta_cvs_all) <- gsub('.x', '.placenta', colnames(eQTLs_placenta_cvs_all))
+colnames(eQTLs_placenta_cvs_all) <- gsub('.y', '.cvs', colnames(eQTLs_placenta_cvs_all))
+```
+
+```{r}
+save(eQTLs_placenta_cvs_all, file = here("02_Data/CVS_Placenta/", "eQTLs_placenta_cvs_all.Rdata"))
+```
+
+more elaborated
+```{r}
+# extract those associations that are significant (final, bootstrapped) results in EITHER placenta OR cvs (unclumped)
+eQTLs_placenta_cvs_all_sig <- eQTLs_placenta_cvs_all[eQTLs_placenta_cvs_all$inboot.placenta == "yes" | eQTLs_placenta_cvs_all$inboot.cvs == "yes", ]
+```
+
+```{r}
+# add column indicating if it is a cvs or placenta effect or both
+eQTLs_placenta_cvs_all_sig <- eQTLs_placenta_cvs_all_sig %>%
+  mutate(type_sig = case_when(inboot.cvs== "yes" & inboot.placenta== "yes" ~ "both",
+                              inboot.cvs== "no" & inboot.placenta== "yes" ~ "placenta",
+                              inboot.cvs== "yes" & inboot.placenta== "no" ~ "cvs"))
+```
+
+```{r}
+# add column indicating if it is in the clumped results
+eQTLs_placenta_cvs_all_sig <- eQTLs_placenta_cvs_all_sig %>%
+  mutate(type_clumped = case_when(inclumped.cvs == "yes" & inclumped.placenta== "yes" ~ "both",
+                              inclumped.cvs == "no" & inclumped.placenta == "no" ~ "none",
+                              inclumped.cvs== "no" & inclumped.placenta== "yes" ~ "placenta",
+                              inclumped.cvs== "yes" & inclumped.placenta== "no" ~ "cvs"))
+```
+
+```{r}
+save(eQTLs_placenta_cvs_all_sig, file = here("02_Data/CVS_Placenta/", "eQTLs_placenta_cvs_all_sig.Rdata"))
+```
+
+- - - 
+
+indicator for statistics table
+```{r}
+eQTLs_placenta_cvs_gene_snp <- eQTLs_placenta_cvs[,c("eSNPs", "eGene")]
+eQTLs_placenta_cvs_gene_snp$cvs_and_placenta <- "yes"
+```
+
+```{r}
+eQTLs_placenta_statistics <- merge(eQTLs_placenta_statistics, eQTLs_placenta_cvs_gene_snp, by=c("eGene", "eSNPs"), all.x=T)
+eQTLs_placenta_statistics[c("cvs_and_placenta")][is.na(eQTLs_placenta_statistics[c("cvs_and_placenta")])] <- "no"
+```
+
+```{r}
+eQTLs_cvs_statistics <- merge(eQTLs_cvs_statistics, eQTLs_placenta_cvs_gene_snp, by=c("eGene", "eSNPs"), all.x=T)
+eQTLs_cvs_statistics[c("cvs_and_placenta")][is.na(eQTLs_cvs_statistics[c("cvs_and_placenta")])] <- "no"
+```
+
+export full tables
+```{r, warning=F}
+write.table(eQTLs_placenta_statistics, file=here("Analyses/Results/Descriptive", "eQTLs_placenta_statistics.csv"), sep=",", row.names = FALSE, quote=FALSE, col.names = T)
+save(eQTLs_placenta_statistics, file = here("Analyses/Results/Descriptive", "eQTLs_placenta_statistics.Rdata"))
+```
+
+```{r, warning=F}
+write.table(eQTLs_cvs_statistics, file=here("Analyses/Results/Descriptive", "eQTLs_cvs_statistics.csv"), sep=",", row.names = FALSE, quote=FALSE, col.names = T)
+save(eQTLs_cvs_statistics, file = here("Analyses/Results/Descriptive", "eQTLs_cvs_statistics.Rdata"))
+```
+
+- - - 
+
+```{r}
+load(here("02_Data/CVS_Placenta/", "eQTLs_placenta_cvs.Rdata"))
+load(here("02_Data/CVS_Placenta/", "eQTLs_placenta_cvs_all_sig.Rdata"))
+```
+
+
+## direction of effect
+
+```{r}
+nrow(eQTLs_placenta_cvs_all_sig)
+table(eQTLs_placenta_cvs_all_sig$type_sig)
+table(eQTLs_placenta_cvs_all_sig$type_clumped)
+```
+
+```{r}
+# extract relevant columns from large data frame
+eQTLs_placenta_cvs_all_sig_relevant <- eQTLs_placenta_cvs_all_sig[ ,c("eSNPs", "eGene", "beta.placenta", "beta.cvs", "type_sig", "type_clumped")]
+```
+
+```{r}
+scatterplot_signs(eQTLs_placenta_cvs_all_sig_relevant, plottitle = "eQTLs")
+```
+positive/negative direction among eQTL effects 
+```{r}
+eQTLs_placenta_cvs_all_sig_relevant$direction_effect.placenta <- sign(eQTLs_placenta_cvs_all_sig_relevant$beta.placenta)
+eQTLs_placenta_cvs_all_sig_relevant$direction_effect.cvs <- sign(eQTLs_placenta_cvs_all_sig_relevant$beta.cvs)
+
+eQTLs_placenta_cvs_all_sig_relevant$direction_effect_same <- sign(eQTLs_placenta_cvs_all_sig_relevant$beta.placenta) == sign(eQTLs_placenta_cvs_all_sig_relevant$beta.cvs)
+```
+
+```{r}
+cat(sum(eQTLs_placenta_cvs_all_sig_relevant$direction_effect_same, na.rm = T), "associations with same direction of effect. \n")
+cat("This is", (sum(eQTLs_placenta_cvs_all_sig_relevant$direction_effect_same, na.rm = T) / length(eQTLs_placenta_cvs_all_sig_relevant$direction_effect_same) *100), "% of associations.")
+```
+
+positive/negative direction among 288 both significant effects 
+```{r}
+effects_eQTLs_placenta_cvs$direction_effect.placenta <- sign(effects_eQTLs_placenta_cvs$corrected_beta.placenta)
+effects_eQTLs_placenta_cvs$direction_effect.cvs <- sign(effects_eQTLs_placenta_cvs$corrected_beta.cvs)
+
+effects_eQTLs_placenta_cvs$direction_effect_same <- sign(effects_eQTLs_placenta_cvs$corrected_beta.placenta) == sign(effects_eQTLs_placenta_cvs$corrected_beta.cvs)
+```
+
+```{r}
+cat(sum(effects_eQTLs_placenta_cvs$direction_effect_same, na.rm = T), "associations with same direction of effect. \n")
+cat("This is", (sum(effects_eQTLs_placenta_cvs$direction_effect_same, na.rm = T) / length(effects_eQTLs_placenta_cvs$direction_effect_same) *100), "% of associations.")
+```
+
+```{r}
+effects_eQTLs_placenta_cvs$sign_effect <- coalesce(effects_eQTLs_placenta_cvs$direction_effect.placenta,effects_eQTLs_placenta_cvs$direction_effect.cvs)
+```
+
+How many with negative / positive sign (%)?
+```{r}
+prop.table(table(effects_eQTLs_placenta_cvs$sign_effect))
+```
+
+```{r}
+# How many in percent opposite sign?
+eqtl_pc_o <- (length(which(effects_eQTLs_placenta_cvs$direction_effect_same == FALSE))) / (nrow(effects_eQTLs_placenta_cvs$direction_effect)) * 100 # % opposite effect
+eqtl_pc_s_p <- (length(which(effects_eQTLs_placenta_cvs$direction_effect_same == TRUE & effects_eQTLs_placenta_cvs$sign_effect > 0))) / (nrow(effects_eQTLs_placenta_cvs)) * 100 # same, positive sign
+eqtl_pc_s_n <- (length(which(effects_eQTLs_placenta_cvs$direction_effect_same == TRUE & effects_eQTLs_placenta_cvs$sign_effect < 0))) / (nrow(effects_eQTLs_placenta_cvs)) * 100 # same, negative sign
+```
+
+We save the % of opposite and same sign in a data frame
+```{r}
+d_proportion_eqtl_signs <- data.frame(rbind("same sign (+)" = eqtl_pc_s_p, "same sign (-)" = eqtl_pc_s_n, "different sign" = eqtl_pc_o))
+colnames(d_proportion_eqtl_signs) <- "percent"
+d_proportion_eqtl_signs$name <- rownames(d_proportion_eqtl_signs)
+```
+
+```{r}
+save(d_proportion_eqtl_signs, file = here("02_Data/CVS_Placenta/", "d_proportion_eqtl_signs.Rdata"))
+```
+
+```{r}
+piechart_signs(d_proportion_eqtl_signs, "percent", "name", plottitle = "eQTLs", colors=eqtl_color_2levels)
+```
+
+
+# pi statistic
+To evaluate to what extent the placenta eQTLs replicated in CVS (at FDR<5%) 
+Identifies significant SNP-gene pairs in a first tissue; uses the distribution of the P values for these pairs in the second tissue to estimate π1. 
+π1 is the proportion of non-null associations in the second tissue. 
+
+π1  provides an estimate of the fraction of true positive eQTLs = estimated fraction of null eQTLs, estimated from the full distribution of p-values (Storey and Tibshirani q-value approach). 
+Here, the π1 statistic can be interpreted as the fraction of eQTL associations shared between the placenta and CVS.
+
+*first we find all final significant SNP-Gene pairs of placenta in CVS*
+```{r}
+eQTLs_placenta_sig_in_cvs <- merge(eQTLs_placenta_sig, eQTLs_cvs_statistics, by = c("eSNPs", "eGene"))
+cat(nrow(eQTLs_placenta_sig_in_cvs), "associations, which are among final but unclumped results in Placenta and can be found in CVS MatrixEQTL results")
+```
+
+```{r}
+colnames(eQTLs_placenta_sig_in_cvs) <- gsub('.x', '.placenta', colnames(eQTLs_placenta_sig_in_cvs))
+colnames(eQTLs_placenta_sig_in_cvs) <- gsub('.y', '.cvs', colnames(eQTLs_placenta_sig_in_cvs))
+```
+
+```{r}
+sum(is.infinite(eQTLs_placenta_sig_in_cvs$pvalue.cvs))
+sum(is.na(eQTLs_placenta_sig_in_cvs$pvalue.cvs))
+hist(eQTLs_placenta_sig_in_cvs$pvalue.cvs)
+```
+
+```{r}
+#qobj_eqtl_placenta_in_cvs <- qvalue::qvalue(eQTLs_placenta_sig_in_cvs$pvalue.cvs)
+qobj_eqtl_placenta_in_cvs <- qvalue::qvalue_truncp(eQTLs_placenta_sig_in_cvs$pvalue.cvs)
+1-qobj_eqtl_placenta_in_cvs$pi0
+```
+
+random samples (1,000 for each qtl level to be able to better compare size of pi1 between eqtls, meqtls, eqtms):
+
+```{r}
+set.seed(3)
+# sample repeatedly (1000 times) 1000 rows of df and store in a list (still from significant hits!)
+list1000_eQTLs_placenta_sig_in_cvs <- replicate(1000, sample_n(eQTLs_placenta_sig_in_cvs, 1000), simplify = FALSE)
+# get p values
+list1000_pcvs_eQTLs <- lapply(list1000_eQTLs_placenta_sig_in_cvs, "[",,"pvalue.cvs")
+# calculate qvalue_truncp on p-values
+qobj_list1000_pcvs_eQTLs <- lapply(list1000_pcvs_eQTLs, qvalue::qvalue_truncp)
+# get pi0
+l1000_pi0_eQTLs <- unlist(lapply(qobj_list1000_pcvs_eQTLs, "[","pi0"))
+# calculate pi1
+l1000_pi1_eQTLs <- 1-l1000_pi0_eQTLs
+```
+
+```{r}
+describe(l1000_pi1_eQTLs)
+```
+
+## common eQTLs among final associations
+
+```{r}
+common_snp_gene_placenta_cvs
+
+common_snp_gene_placenta_cvs[,c("eSNPs", "eGene", "HGNC..cvsmbol.placenta", "HGNC..cvsmbol.cvs", "corrected_beta.placenta", "corrected_beta.cvs")]
+```
+We plot the one with larger effect
+ENSG00000147813 - rs9657360 - 	NAPRT1
+
+*expression data cleaned for covariates*
+
+placenta
+```{r}
+identical(colnames(inv_norm_placenta_tmm_filtered_ordered_eqtl), colnames(cov_rna_placenta_ordered_eqtl))
+identical(colnames(inv_norm_placenta_tmm_filtered_ordered_eqtl), colnames(geno_t_fullqced_IDc_placenta_ordered_eqtl))
+```
+
+```{r}
+Y_r_p <- data.frame(t(inv_norm_placenta_tmm_filtered_ordered_eqtl)) # rows are samples now and columns are genes
+X_r_p <- data.frame(t(cov_rna_placenta_ordered_eqtl))  # rows are samples
+identical(rownames(X_r_p), rownames(Y_r_p))
+```
+
+
+```{r}
+lms_resid_inv_norm_placenta_tmm_filtered_ordered_eqtl <- lapply(1:ncol(Y_r_p), function(x) resid(lm(Y_r_p[,x] ~ ., data = X_r_p)))
+resid_inv_norm_placenta_tmm_filtered_ordered_eqtl <- matrix(unlist(lms_resid_inv_norm_placenta_tmm_filtered_ordered_eqtl), ncol = ncol(Y_r_p))
+rownames(resid_inv_norm_placenta_tmm_filtered_ordered_eqtl) <- rownames(Y_r_p)
+colnames(resid_inv_norm_placenta_tmm_filtered_ordered_eqtl) <- colnames(Y_r_p)
+resid_inv_norm_placenta_tmm_filtered_ordered_eqtl <- data.frame(t(resid_inv_norm_placenta_tmm_filtered_ordered_eqtl))
+```
+
+cvs
+```{r}
+identical(colnames(inv_norm_cvs_tmm_filtered_ordered_eqtl), colnames(cov_rna_cvs_ordered_eqtl))
+identical(colnames(inv_norm_cvs_tmm_filtered_ordered_eqtl), colnames(geno_t_fullqced_IDc_cvs_ordered_eqtl))
+```
+
+regress out
+```{r}
+Y_r_c <- data.frame(t(inv_norm_cvs_tmm_filtered_ordered_eqtl)) 
+X_r_c <- data.frame(t(cov_rna_cvs_ordered_eqtl)) 
+identical(rownames(X_r_c), rownames(Y_r_c))
+```
+
+```{r}
+lms_resid_inv_norm_cvs_tmm_filtered_ordered_eqtl <- lapply(1:ncol(Y_r_c), function(x) resid(lm(Y_r_c[,x] ~ ., data = X_r_c)))
+resid_inv_norm_cvs_tmm_filtered_ordered_eqtl <- matrix(unlist(lms_resid_inv_norm_cvs_tmm_filtered_ordered_eqtl), ncol = ncol(Y_r_c))
+rownames(resid_inv_norm_cvs_tmm_filtered_ordered_eqtl) <- rownames(Y_r_c)
+colnames(resid_inv_norm_cvs_tmm_filtered_ordered_eqtl) <- colnames(Y_r_c)
+resid_inv_norm_cvs_tmm_filtered_ordered_eqtl <- data.frame(t(resid_inv_norm_cvs_tmm_filtered_ordered_eqtl))
+```
+
+```{r}
+save(geno_info, geno_t_fullqced_IDc_placenta_ordered_eqtl, resid_inv_norm_placenta_tmm_filtered_ordered_eqtl, geno_t_fullqced_IDc_cvs_ordered_eqtl, resid_inv_norm_cvs_tmm_filtered_ordered_eqtl, file = here("02_Data/CVS_Placenta/", "data_for_eqtl_plot.Rdata"))
+```
+
+
+*plot*
+ENSG00000147813 (NAPRT1) - rs9657360
+```{r}
+NAPRT1_rs9657360_plot <- 
+  snp_vs_expression_plot("ENSG00000147813", "rs9657360", "NAPRT1", geno_t_fullqced_IDc_placenta_ordered_eqtl, resid_inv_norm_placenta_tmm_filtered_ordered_eqtl, geno_t_fullqced_IDc_cvs_ordered_eqtl, resid_inv_norm_cvs_tmm_filtered_ordered_eqtl)
+
+NAPRT1_rs9657360_plot
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

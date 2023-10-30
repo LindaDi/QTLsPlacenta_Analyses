@@ -1,0 +1,433 @@
+---
+title: "Combination QTLs and Tissue-Specifity"
+author: Linda Dieckmann
+date: January 2023
+output: github_document
+---
+
+# load packages
+```{r, warning=FALSE}
+library(here)
+library(tidyverse)
+library(TissueEnrich)
+library(gprofiler2)
+library(VennDiagram)
+```
+
+If you update package(s) call 
+  renv::snapshot() 
+to save the current picture of the project.
+
+```{r}
+writeLines(capture.output(sessionInfo()), here("Analyses/Scripts/sessionInfos/", "sessionInfo_Script_5_1_1.txt"))
+```
+
+```{r}
+source(here("Analyses/Scripts/", "functions.R"))
+```
+
+# load data
+```{r}
+# input expression data for background genes (placenta)
+load(here("02_Data/prepared/", "inv_norm_placenta_tmm_filtered.Rdata"))
+```
+
+```{r}
+# prepared statistics table
+load( here("Analyses/Results/Descriptive", "eQTLs_placenta_statistics.Rdata"))
+load( here("Analyses/Results/Descriptive", "meQTLs_placenta_statistics.Rdata"))
+load( here("Analyses/Results/Descriptive", "eQTMs_placenta_statistics.Rdata"))
+```
+
+
+# combine data
+
+## placenta
+
+*prepare data*
+first we extract only our significant, final results from our complete statistics table
+```{r}
+final_eQTLs_placenta_statistics <- eQTLs_placenta_statistics[eQTLs_placenta_statistics$inclumped == "yes", ]
+final_meQTLs_placenta_statistics <- meQTLs_placenta_statistics[meQTLs_placenta_statistics$inclumped == "yes", ]
+final_eQTMs_placenta_statistics <- eQTMs_placenta_statistics[eQTMs_placenta_statistics$inboot == "yes", ]
+```
+
+For those columns that are specific for the data set (i.e., any statistics) we need to rename the columns to make it clear
+```{r}
+names(final_eQTLs_placenta_statistics)[-c(1)] <- paste(names(final_eQTLs_placenta_statistics)[-c(1)], "eQTL", sep = '_')
+names(final_meQTLs_placenta_statistics)[-c(1)] <- paste(names(final_meQTLs_placenta_statistics)[-c(1)], "meQTL", sep = '_')
+names(final_eQTMs_placenta_statistics)[-c(1:2)] <- paste(names(final_eQTMs_placenta_statistics)[-c(1:2)], "eQTM", sep = '_')
+```
+
+
+*first merge eQTMs and meQTLs*
+-> only genes where we know SNP influence
+```{r}
+eGenes_meth_placenta_qtls <- merge(final_meQTLs_placenta_statistics, final_eQTMs_placenta_statistics, by.x="eCpG", by.y="eCpGs")
+```
+
+```{r}
+cat("contains", length(unique(eGenes_meth_placenta_qtls$eGene)), "unique genes. ")
+cat("contains", length(unique(eGenes_meth_placenta_qtls$eCpG)), "unique CpGs. ")
+cat("contains", length(unique(eGenes_meth_placenta_qtls$eSNPs_meQTL)), "unique SNPs. ")
+cat("contains", nrow(eGenes_meth_placenta_qtls), "associations. ")
+```
+
+*We merge by genes (eQTLs & eQTMs)*
+-> but we keep all genes!
+```{r}
+eGenes_placenta_qtls <- merge(final_eQTLs_placenta_statistics, eGenes_meth_placenta_qtls, by="eGene", all = T)
+```
+
+```{r}
+cat("contains", length(unique(eGenes_placenta_qtls$eGene)), "unique genes. ")
+cat("contains", length(unique(eGenes_placenta_qtls$eCpG)), "unique CpGs. ")
+cat("contains", length(unique(eGenes_placenta_qtls$eSNPs_eQTL)), "unique eQTL SNPs. ")
+cat("contains", length(unique(eGenes_placenta_qtls$eSNPs_meQTL)), "unique meQTL SNPs. ")
+cat("contains", nrow(eGenes_placenta_qtls), "associations. ")
+```
+
+
+```{r}
+eGenes_placenta_qtls$HGNC_symbol <- coalesce(eGenes_placenta_qtls$HGNC_symbol_eQTL, eGenes_placenta_qtls$HGNC_symbol_eQTM)
+eGenes_placenta_qtls$HGNC_symbol_eQTL <- NULL
+eGenes_placenta_qtls$HGNC_symbol_eQTM <- NULL
+```
+
+*We save the QTL data combined for Genes for Placenta*
+```{r}
+save(eGenes_placenta_qtls, file = here("02_Data/QTL_Data/", "eGenes_placenta_qtls.Rdata"))
+```
+
+
+# test tissue-specifity (birth placenta eGenes)
+We use the TissueEnrich package, the hypergeometric test is being used to determine if the tissue-specific genes are enriched among the input genes.
+HPA Dataset: RNA-Seq data across 35 human tissues (Uhlén et al. 2015). 
+
+```{r}
+input_tissue_enrich_eGenes_placenta <- GeneSet(geneIds=unique(eGenes_placenta_qtls$eGene),organism="Homo Sapiens",geneIdType=ENSEMBLIdentifier()) 
+```
+
+We use all placenta input genes as background
+```{r}
+background_tissue_enrich_eGenes_placenta <-GeneSet(geneIds=unique(rownames(inv_norm_placenta_tmm_filtered)),organism="Homo Sapiens",geneIdType=ENSEMBLIdentifier()) 
+```
+
+```{r}
+GEnrich_tissue_enrich_eGenes_placenta_hpadata <- teEnrichment(inputGenes = input_tissue_enrich_eGenes_placenta, backgroundGenes = background_tissue_enrich_eGenes_placenta, rnaSeqDataset = 1, tissueSpecificGeneType = 1)
+# tissueSpecificGeneType: 1 for “All” (default) 2 for “Tissue-Enriched” 3 for “Tissue-Enhanced” 4 for “Group-Enriched”
+```
+
+```{r}
+SE.EnrichmentOutput_tissue_enrich_eGenes_placenta_hpadata <- GEnrich_tissue_enrich_eGenes_placenta_hpadata[[1]]
+
+EnrichmentOutput_tissue_enrich_eGenes_placenta_hpadata <- setNames(data.frame(assay(SE.EnrichmentOutput_tissue_enrich_eGenes_placenta_hpadata),row.names = rowData(SE.EnrichmentOutput_tissue_enrich_eGenes_placenta_hpadata)[,1]), colData(SE.EnrichmentOutput_tissue_enrich_eGenes_placenta_hpadata)[,1])
+
+EnrichmentOutput_tissue_enrich_eGenes_placenta_hpadata$Tissue<-row.names(EnrichmentOutput_tissue_enrich_eGenes_placenta_hpadata)
+```
+
+```{r}
+EnrichmentOutput_tissue_enrich_eGenes_placenta_hpadata
+```
+
+```{r}
+brown_red_cb <- desatcolor(brown_red_cb)
+```
+
+```{r}
+Plot_TissueEnrichment_Placenta_Genes <- 
+ggplot(EnrichmentOutput_tissue_enrich_eGenes_placenta_hpadata,aes(x=reorder(Tissue,-Log10PValue),y=Log10PValue,label = Tissue.Specific.Genes))+ #,fill = Tissue
+      geom_bar(stat = 'identity', fill = lighten(brown_red_cb, 0.4))+
+      labs(x='', y = '-log10 (p-adjusted)')+
+      scale_y_continuous(breaks = seq(2,12,by=2))+
+      #ylim(0,5)+
+      theme_classic()+
+      theme(legend.position="none")+
+      theme(plot.title = element_text(hjust = 0.5,size = 20),
+            axis.title = element_text(family = "Helvetica", size=standard_textsize), 
+            axis.text = element_text(family = "Helvetica", size=standard_textsize))+
+      theme(axis.text.x = element_text(family = "Helvetica", angle = 45, vjust = 1, hjust = 1, size = standard_textsize),
+            panel.grid.major= element_blank(),
+            panel.grid.minor = element_blank(), 
+            plot.margin = margin(0, 0, 0, 20)) +
+      geom_hline(yintercept=2, linetype="dashed", color = "black", linewidth=0.5)  # p-value 0.01 
+
+Plot_TissueEnrichment_Placenta_Genes
+```
+
+
+```{r}
+ggsave(here("Analyses/Results/TissueSpecific/", "TissueEnrichment_Placenta_EGenes.png"), Plot_TissueEnrichment_Placenta_Genes, width=standard_width_mm_single, height=standard_height_mm/3, units="mm", dpi=300, scale=2)
+```
+
+*Retrieve the placenta-specific genes*
+```{r}
+# retrieve the tissue-specific genes along with the type of tissue-specificity in placenta tissue
+Se.GroupInf.EnrichmentOutput_placenta_specific <- GEnrich_tissue_enrich_eGenes_placenta_hpadata[[3]][["Placenta"]]
+GroupInf.EnrichmentOutput_placenta_specific <- data.frame(assay(Se.GroupInf.EnrichmentOutput_placenta_specific))
+```
+
+```{r}
+placenta_specific_genes_among_eGenes <- GroupInf.EnrichmentOutput_placenta_specific$Gene #list of placenta specific genes (27)
+length(placenta_specific_genes_among_eGenes)
+```
+
+```{r}
+table(GroupInf.EnrichmentOutput_placenta_specific$Group)
+```
+
+tissue-enriched: 5-fold higher expression in placenta compared to all other tissues
+tissue-enhanced: 5-fold higher expression in placenta compared to average levels in all other tissues
+group-enriched: 5-fold higher expression in a group of 2-7 tissues compared to all other
+
+```{r}
+info_placenta_specific_genes_among_eGenes <- unique(merge(GroupInf.EnrichmentOutput_placenta_specific, eGenes_placenta_qtls[,c("eGene", "HGNC_symbol")], by.x="Gene", by.y="eGene"))
+colnames(info_placenta_specific_genes_among_eGenes) <- c("ensembl_gene", "enrichment_group", "hgnc_symbol")
+```
+
+```{r}
+# list of genes
+save(placenta_specific_genes_among_eGenes, file=here("02_Data/Tissue_Specific/","placenta_specific_genes_among_eGenes.Rdata"))
+write.table(placenta_specific_genes_among_eGenes, file=here("Analyses/Results/TissueSpecific/","placenta_specific_genes_among_eGenes.txt"), quote = FALSE, col.names = F, row.names=FALSE)
+
+save(info_placenta_specific_genes_among_eGenes, file=here("02_Data/Tissue_Specific/","info_placenta_specific_genes_among_eGenes.Rdata"))
+write.table(info_placenta_specific_genes_among_eGenes, file=here("Analyses/Results/TissueSpecific/","info_placenta_specific_genes_among_eGenes.txt"), quote = FALSE, col.names = T, row.names=FALSE)
+```
+
+*expression of placenta-specific genes in HPA data set*
+Expression of the placenta-specific genes in the HPA data set:
+```{r}
+seExp_EnrichmentOutput_placenta_genes <- GEnrich_tissue_enrich_eGenes_placenta_hpadata[[2]][["Placenta"]]
+exp_EnrichmentOutput_placenta_genes <-setNames(data.frame(assay(seExp_EnrichmentOutput_placenta_genes), row.names = rowData(seExp_EnrichmentOutput_placenta_genes)[,1]), colData(seExp_EnrichmentOutput_placenta_genes)[,1])
+exp_EnrichmentOutput_placenta_genes$Gene <- row.names(exp_EnrichmentOutput_placenta_genes)
+exp_EnrichmentOutput_placenta_genes <- exp_EnrichmentOutput_placenta_genes %>% gather(key = "Tissue", value = "expression",1:(ncol(exp_EnrichmentOutput_placenta_genes)-1))
+```
+
+```{r}
+HeatPlot_TissueEnrichment_Placenta_eGenes_hpa <- 
+  ggplot(exp_EnrichmentOutput_placenta_genes, aes(Tissue, Gene)) + geom_tile(aes(fill = expression),
+     colour = "white") + scale_fill_gradient(low = "white",
+     high = "black")+
+     labs(x='', y = '')+
+      theme_bw()+
+      guides(fill = guide_legend(title = "log2 (TPM)"))+
+      #theme(legend.position="none")+
+      theme(plot.title = element_text(hjust = 0.5, family = "Helvetica", size=standard_textsize), 
+            axis.title = element_text(family = "Helvetica", size=standard_textsize), 
+            axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1,family = "Helvetica", size=standard_textsize), 
+            axis.text.y = element_text(family = "Helvetica", size=standard_textsize), 
+            legend.text = element_text(family = "Helvetica", size=standard_textsize), 
+            legend.title = element_text(family = "Helvetica", size=standard_textsize), 
+            panel.grid.major= element_blank(),
+            panel.grid.minor = element_blank())
+```
+
+```{r}
+ggsave(here("Analyses/Results/TissueSpecific/", "HeatPlot_TissueEnrichment_Placenta_eGenes_hpa.pdf"), HeatPlot_TissueEnrichment_Placenta_eGenes_hpa, width=standard_width_mm_single, height=standard_height_mm, units="mm", dpi=600, scale=2, device = cairo_pdf)
+```
+
+*background genes*
+```{r}
+# our background genes in placenta (input genes for analysis)
+background_genes_placenta_input <- unique(rownames(inv_norm_placenta_tmm_filtered))
+write.table(background_genes_placenta_input, file=here("02_Data/Tissue_Specific/","background_genes_placenta_input.txt"), quote = FALSE, col.names = F, row.names=FALSE)
+```
+
+find also all genes that were eQTLs/eQTMs
+```{r}
+background_genes_eGenes_all <- merge(final_eQTLs_placenta_statistics, final_eQTMs_placenta_statistics, by="eGene", all = T)
+background_genes_eGenes_all <- unique(background_genes_eGenes_all$eGene) # 2,391 genes
+write.table(background_genes_eGenes_all, file=here("02_Data/Tissue_Specific/","background_genes_eGenes_all.txt"), quote = FALSE, col.names = F, row.names=FALSE)
+```
+
+
+# QTLs for placenta-specific genes
+*we extract the QTL data for our 84 placenta-specific genes*
+
+```{r}
+eGenes_placenta_specific_genes_qtls <- merge(eGenes_placenta_qtls, GroupInf.EnrichmentOutput_placenta_specific, by.x="eGene", by.y="Gene")
+dim(eGenes_placenta_specific_genes_qtls)
+length(unique(eGenes_placenta_specific_genes_qtls$eGene))
+```
+
+```{r}
+cat("We have", length(unique(eGenes_placenta_specific_genes_qtls[!is.na(eGenes_placenta_specific_genes_qtls$eSNPs_eQTL), "eGene"])), "eQTL genes. ")
+cat("We have", length(unique(eGenes_placenta_specific_genes_qtls[!is.na(eGenes_placenta_specific_genes_qtls$eSNPs_meQTL), "eGene"])), "eQTM-meQTL genes. ")
+```
+
+NOTE: It could be that a gene is an eQTM gene but some eQTM associations are not in here, because we restricted to eQTMs with meQTLs
+
+```{r}
+eGenes_placenta_specific_genes_qtls_no_m <- eGenes_placenta_specific_genes_qtls[is.na(eGenes_placenta_specific_genes_qtls$eSNPs_meQTL), ]
+length(unique(eGenes_placenta_specific_genes_qtls_no_m$eGene))
+```
+10 genes only eQTLs, no meQTL-eQTM
+
+```{r}
+eGenes_placenta_specific_genes_qtls_no_e <- eGenes_placenta_specific_genes_qtls[is.na(eGenes_placenta_specific_genes_qtls$eSNPs_eQTL), ]
+length(unique(eGenes_placenta_specific_genes_qtls_no_e$eGene))
+```
+51 genes only meQTL-eQTM, no eQTLs
+
+```{r}
+eGenes_placenta_specific_genes_qtls_both <- eGenes_placenta_specific_genes_qtls[!is.na(eGenes_placenta_specific_genes_qtls$eSNPs_eQTL) & !is.na(eGenes_placenta_specific_genes_qtls$eSNPs_meQTL), ]
+length(unique(eGenes_placenta_specific_genes_qtls_both$eGene))
+```
+23 genes have all type of QTLs
+
+```{r}
+cat("We have", length(unique(eGenes_placenta_specific_genes_qtls[!is.na(eGenes_placenta_specific_genes_qtls$eSNPs_eQTL), "eSNPs_eQTL"])), "unique eQTL SNPs. ")
+eQTL_SNPs_unique_placenta_specific <- unique(eGenes_placenta_specific_genes_qtls[!is.na(eGenes_placenta_specific_genes_qtls$eSNPs_eQTL), "eSNPs_eQTL"])
+cat("We have", length(unique(eGenes_placenta_specific_genes_qtls[!is.na(eGenes_placenta_specific_genes_qtls$eSNPs_meQTL), "eSNPs_meQTL"])), "unique meQTL SNPs. ")
+meQTL_SNPs_unique_placenta_specific <- unique(eGenes_placenta_specific_genes_qtls[!is.na(eGenes_placenta_specific_genes_qtls$eSNPs_meQTL), "eSNPs_meQTL"])
+```
+This is a total of 493 SNPs.
+
+```{r}
+total_SNPs_unique_placenta_specific <- unique(c(eQTL_SNPs_unique_placenta_specific, meQTL_SNPs_unique_placenta_specific))
+length(total_SNPs_unique_placenta_specific)
+```
+This is a total of 477 unique SNPs.
+
+```{r}
+length(intersect(eQTL_SNPs_unique_placenta_specific, meQTL_SNPs_unique_placenta_specific))
+```
+Of these, 16 are both eQTL and meQTL SNPs.
+
+```{r}
+length(unique(eGenes_placenta_specific_genes_qtls$eCpG))
+```
+
+
+```{r}
+# save the placenta-specific gene's omics regulatory information
+save(eGenes_placenta_specific_genes_qtls, file=here("02_Data/Tissue_Specific/","eGenes_placenta_specific_genes_qtls.Rdata"))
+write.table(eGenes_placenta_specific_genes_qtls, file=here("Analyses/Results/TissueSpecific/","eGenes_placenta_specific_genes_qtls.txt"), quote = FALSE, col.names = T, row.names=FALSE)
+write.csv(eGenes_placenta_specific_genes_qtls, file=here("Analyses/Results/TissueSpecific/","eGenes_placenta_specific_genes_qtls.csv"), row.names = FALSE)
+```
+
+
+*look at QTL data for the genes*
+```{r}
+load(here("02_Data/Tissue_Specific/","eGenes_placenta_specific_genes_qtls.Rdata"))
+```
+
+```{r}
+eqtl_genes <- unique(eGenes_placenta_specific_genes_qtls[!is.na(eGenes_placenta_specific_genes_qtls$eSNPs_eQTL), "eGene"])
+meqtl_genes <- unique(eGenes_placenta_specific_genes_qtls[!is.na(eGenes_placenta_specific_genes_qtls$eSNPs_meQTL), "eGene"])
+```
+
+```{r}
+eqtl_snps <- unique(eGenes_placenta_specific_genes_qtls[!is.na(eGenes_placenta_specific_genes_qtls$eSNPs_eQTL), "eSNPs_eQTL"])
+meqtl_snps <- unique(eGenes_placenta_specific_genes_qtls[!is.na(eGenes_placenta_specific_genes_qtls$eSNPs_meQTL), "eSNPs_meQTL"])
+```
+
+```{r}
+col_venn_placenta_genes_qtls <- c(eqtl_color, meqtl_color)
+```
+
+GENES
+```{r}
+placenta_genes_qtl_types_venn <-
+venn.diagram(
+  x = list(eqtl_genes, meqtl_genes),
+  category.names = c("meQTL - eQTM Genes", "eQTL Genes"),
+  filename = NULL,
+  output=TRUE,
+  
+  # Output features
+  imagetype="png" ,
+  height = standard_height_mm/8 , 
+  width = standard_width_mm_single , 
+  units = "mm",
+  resolution = 600,
+  compression = "lzw",
+  
+  # Circles
+  lwd = 2,
+  lty = 'blank',
+  fill = col_venn_placenta_genes_qtls,
+  scale = FALSE,
+  euler.d = TRUE,
+   
+  # Numbers
+  cex = 1,
+  #fontface = "bold",
+  fontfamily = "sans",
+  ext.text = FALSE,
+   
+  # Set names
+  cat.cex = .8,
+  cat.fontface = "bold",
+  cat.default.pos = "outer",
+  cat.dist = c(0.15, 0.15),
+  cat.fontfamily = "sans"
+)
+
+```
+
+```{r}
+g_placenta_genes_qtl_types_venn <- gTree(children=placenta_genes_qtl_types_venn)
+```
+
+```{r}
+ggsave(here("Analyses/Results/TissueSpecific/", "placenta_genes_qtl_types_venn.pdf"),
+g_placenta_genes_qtl_types_venn, width=standard_width_mm_single, height=standard_height_mm/8, units="mm", dpi=600, scale=2, device = cairo_pdf)
+```
+
+SNPs
+
+```{r}
+placenta_genes_qtl_types_venn_snps <-
+venn.diagram(
+  x = list(eqtl_snps, meqtl_snps),
+  category.names = c("meQTL - eQTM SNPs", "eQTL SNPs"),
+  filename = NULL,
+  output=TRUE,
+  
+  # Output features
+  imagetype="png" ,
+  height = standard_height_mm/8 , 
+  width = standard_width_mm_single , 
+  units = "mm",
+  resolution = 600,
+  compression = "lzw",
+  
+  # Circles
+  lwd = 2,
+  lty = 'blank',
+  fill = col_venn_placenta_genes_qtls,
+  scale = FALSE,
+  euler.d = TRUE,
+   
+  # Numbers
+  cex = 1,
+  #fontface = "bold",
+  fontfamily = "sans",
+  ext.text = FALSE,
+   
+  # Set names
+  cat.cex = .8,
+  cat.fontface = "bold",
+  cat.default.pos = "outer",
+  cat.dist = c(0.15, 0.15),
+  cat.fontfamily = "sans"
+)
+
+```
+
+```{r}
+g_placenta_genes_qtl_types_venn_snps <- gTree(children=placenta_genes_qtl_types_venn_snps)
+```
+
+```{r}
+ggsave(here("Analyses/Results/TissueSpecific/", "placenta_genes_qtl_types_venn_snps.pdf"),
+g_placenta_genes_qtl_types_venn_snps, width=standard_width_mm_single, height=standard_height_mm/8, units="mm", dpi=600, scale=2, device = cairo_pdf)
+```
+
+
+
+
+
+
+

@@ -1,0 +1,149 @@
+---
+title: "Placenta-Specificity and combination QTLs"
+author: Linda Dieckmann
+date: January 2023
+output: github_document
+---
+
+# load packages
+```{r, warning=FALSE}
+library(here)
+library(tidyverse)
+library(TissueEnrich)
+```
+
+If you update package(s) call 
+  renv::snapshot() 
+to save the current picture of the project.
+
+```{r}
+writeLines(capture.output(sessionInfo()), here("Analyses/Scripts/sessionInfos/", "sessionInfo_Script_5_1_2.txt"))
+```
+
+```{r}
+source(here("Analyses/Scripts/", "functions.R"))
+```
+
+# load data
+```{r}
+# input expression data for background genes (cvs)
+load(here("02_Data/prepared/", "inv_norm_cvs_tmm_filtered.Rdata"))
+```
+
+```{r}
+# prepared statistics table
+load( here("Analyses/Results/Descriptive", "eQTLs_cvs_statistics.Rdata"))
+load( here("Analyses/Results/Descriptive", "meQTLs_cvs_statistics.Rdata"))
+load( here("Analyses/Results/Descriptive", "eQTMs_cvs_statistics.Rdata"))
+```
+
+
+# combine data
+
+## cvs
+
+*prepare data*
+first we extract only our significiant, final results from our complete statistics table
+```{r}
+final_eQTLs_cvs_statistics <- eQTLs_cvs_statistics[eQTLs_cvs_statistics$inclumped == "yes", ]
+final_meQTLs_cvs_statistics <- meQTLs_cvs_statistics[meQTLs_cvs_statistics$inclumped == "yes", ]
+final_eQTMs_cvs_statistics <- eQTMs_cvs_statistics[eQTMs_cvs_statistics$inboot == "yes", ]
+```
+
+For those columns that are specific for the data set (i.e., any statistics) we need to rename the columns to make it clear
+```{r}
+names(final_eQTLs_cvs_statistics)[-1] <- paste(names(final_eQTLs_cvs_statistics)[-1], "eQTL", sep = '_')
+names(final_meQTLs_cvs_statistics)[-1] <- paste(names(final_meQTLs_cvs_statistics)[-1], "meQTL", sep = '_')
+names(final_eQTMs_cvs_statistics)[-c(1:2)] <- paste(names(final_eQTMs_cvs_statistics)[-c(1:2)], "eQTM", sep = '_')
+```
+
+
+*first merge eQTMs and meQTLs*
+-> only genes where we know SNP influence
+```{r}
+eGenes_meth_cvs_qtls <- merge(final_eQTMs_cvs_statistics, final_meQTLs_cvs_statistics, by="eCpG")
+```
+
+```{r}
+cat("contains", length(unique(eGenes_meth_cvs_qtls$eGene)), "unique genes. ")
+cat("contains", length(unique(eGenes_meth_cvs_qtls$eCpG)), "unique CpGs. ")
+cat("contains", length(unique(eGenes_meth_cvs_qtls$eSNPs_meQTL)), "unique SNPs. ")
+cat("contains", nrow(eGenes_meth_cvs_qtls), "associations. ")
+```
+
+*We merge by genes (eQTLs & eQTMs)*
+-> but we keep all genes!
+```{r}
+eGenes_cvs_qtls <- merge(final_eQTLs_cvs_statistics, eGenes_meth_cvs_qtls, by="eGene", all = T)
+```
+
+```{r}
+cat("contains", length(unique(eGenes_cvs_qtls$eGene)), "unique genes. ")
+cat("contains", length(unique(eGenes_cvs_qtls$eCpG)), "unique CpGs. ")
+cat("contains", length(unique(eGenes_cvs_qtls$eSNPs_eQTL)), "unique eQTL SNPs. ")
+cat("contains", length(unique(eGenes_cvs_qtls$eSNPs_meQTL)), "unique meQTL SNPs. ")
+cat("contains", nrow(eGenes_cvs_qtls), "associations. ")
+```
+
+
+```{r}
+eGenes_cvs_qtls$HGNC_symbol <- coalesce(eGenes_cvs_qtls$HGNC_symbol_eQTL, eGenes_cvs_qtls$HGNC_symbol_eQTM)
+eGenes_cvs_qtls$HGNC_symbol_eQTL <- NULL
+eGenes_cvs_qtls$HGNC_symbol_eQTM <- NULL
+```
+
+*We save the QTL data combined for Genes for cvs*
+```{r}
+save(eGenes_cvs_qtls, file = here("02_Data/QTL_Data/", "eGenes_cvs_qtls.Rdata"))
+```
+
+# test tissue-specifity (birth cvs eGenes)
+We use the TissueEnrich package, the hypergeometric test is being used to determine if the tissue-specific genes are enriched among the input genes.
+HPA Dataset: RNA-Seq data across 35 human tissues (Uhlén et al. 2015). 
+
+```{r}
+input_tissue_enrich_eGenes_cvs <- GeneSet(geneIds=unique(eGenes_cvs_qtls$eGene),organism="Homo Sapiens",geneIdType=ENSEMBLIdentifier()) 
+```
+
+We use all cvs input genes as background
+```{r}
+background_tissue_enrich_eGenes_cvs <-GeneSet(geneIds=unique(rownames(inv_norm_cvs_tmm_filtered)),organism="Homo Sapiens",geneIdType=ENSEMBLIdentifier()) 
+```
+
+```{r}
+GEnrich_tissue_enrich_eGenes_cvs_hpadata <- teEnrichment(inputGenes = input_tissue_enrich_eGenes_cvs, backgroundGenes = background_tissue_enrich_eGenes_cvs, rnaSeqDataset = 1, tissueSpecificGeneType = 1)
+# tissueSpecificGeneType: 1 for “All” (default) 2 for “Tissue-Enriched” 3 for “Tissue-Enhanced” 4 for “Group-Enriched”
+```
+
+```{r}
+SE.EnrichmentOutput_tissue_enrich_eGenes_cvs_hpadata <- GEnrich_tissue_enrich_eGenes_cvs_hpadata[[1]]
+
+EnrichmentOutput_tissue_enrich_eGenes_cvs_hpadata <- setNames(data.frame(assay(SE.EnrichmentOutput_tissue_enrich_eGenes_cvs_hpadata),row.names = rowData(SE.EnrichmentOutput_tissue_enrich_eGenes_cvs_hpadata)[,1]), colData(SE.EnrichmentOutput_tissue_enrich_eGenes_cvs_hpadata)[,1])
+
+EnrichmentOutput_tissue_enrich_eGenes_cvs_hpadata$Tissue<-row.names(EnrichmentOutput_tissue_enrich_eGenes_cvs_hpadata)
+```
+
+```{r}
+EnrichmentOutput_tissue_enrich_eGenes_cvs_hpadata
+```
+
+
+```{r}
+ggplot(EnrichmentOutput_tissue_enrich_eGenes_cvs_hpadata,aes(x=reorder(Tissue,-Log10PValue),y=Log10PValue,label = Tissue.Specific.Genes,fill = Tissue))+
+      geom_bar(stat = 'identity')+
+      labs(x='', y = '-log10 (p-adjusted)')+
+      scale_y_continuous(breaks = seq(2,12,by=2))+
+      #ylim(0,5)+
+      theme_classic()+
+      theme(legend.position="none")+
+      theme(plot.title = element_text(hjust = 0.5,size = 20),axis.title = element_text(size=standard_textsize), axis.text = element_text(size=standard_textsize))+
+      theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1),panel.grid.major= element_blank(),panel.grid.minor = element_blank(), plot.margin = margin(0, 0, 0, 20)) +
+      geom_hline(yintercept=2, linetype="dashed", color = "black", size=0.5) + # p-value 0.01 
+      scale_fill_manual("legend", values = as.character(colors_35))
+```
+
+
+
+
+
+

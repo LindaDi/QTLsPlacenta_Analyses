@@ -1,0 +1,1713 @@
+---
+title: "Basic QTL Annotation"
+author: Linda Dieckmann
+date: December 2022
+output: github_document
+---
+
+In this notebook we annotate SNP, genes and CpGs of our QTLs.
+
+# load packages
+```{r, warning=FALSE}
+library(here)
+library(MatrixEQTL)
+library(BootstrapQTL)
+library(ggplot2)
+library(dplyr)
+library(cowplot)
+library(scales)
+library(data.table)
+library(ChIPseeker)
+library(org.Hs.eg.db)
+library(TxDb.Hsapiens.UCSC.hg19.knownGene)
+library(GenomicRanges)
+library(gprofiler2)
+library(psych)
+```
+
+If you update package(s) call 
+  renv::snapshot() 
+to save the current picture of the project.
+
+```{r}
+writeLines(capture.output(sessionInfo()), here("Analyses/Scripts/sessionInfos/", "sessionInfo_Script_3_5.txt"))
+```
+
+```{r}
+source(here("Analyses/Scripts/", "functions.R"))
+```
+
+# load data
+QTL data
+```{r}
+load(here("02_Data/QTL_Data/", "bme_eqtl_cvs_clumped.Rdata"))
+load(here("02_Data/QTL_Data/", "bme_eqtl_placenta_clumped.Rdata"))
+load(here("02_Data/QTL_Data/", "bme_meqtl_cvs_clumped.Rdata"))
+load(here("02_Data/QTL_Data/", "bme_meqtl_placenta_clumped.Rdata"))
+load(here("02_Data/MatrixEQTL_Output", "bme_eqtm_placenta.Rdata"))
+load(here("02_Data/MatrixEQTL_Output", "bme_eqtm_cvs.Rdata"))
+```
+
+annotations
+```{r}
+load(here("02_Data/prepared/", "annotation_genes_placenta_rna.Rdata"))
+load(here("02_Data/prepared/", "annotation_genes_cvs_rna.Rdata"))
+load(here("02_Data/prepared/", "annotation_placenta_meth.Rdata"))
+load(here("02_Data/prepared/", "annotation_cvs_meth.Rdata"))
+load(here("02_Data/raw/", "geno_info.Rdata")) # info from bim file
+load(here("02_Data/raw", "ensembl.Rdata")) # ensembl for genes
+```
+
+
+# Annotation
+
+## distances
+
+### eQTLs
+distance SNP-Gene
+#### Placenta
+first get eQTL SNP-gene pairs
+```{r}
+snps_genes_eqtls_placenta <- bme_eqtl_placenta_clumped[ ,c("eSNPs", "eGene")]
+```
+
+
+add position info
+```{r}
+snps_genes_eqtls_placenta <- merge(snps_genes_eqtls_placenta, annotation_genes_placenta_rna, by.x="eGene", by.y="ensembl_gene_id")
+snps_genes_eqtls_placenta <- merge(snps_genes_eqtls_placenta, geno_info[,-3], by.x="eSNPs", by.y="snp.name")
+
+names(snps_genes_eqtls_placenta) <- c("snp", "gene", "gene_chr", "gene_start_pos", "gene_end_pos", "gene_symbol", "snp_chr", "snp_pos", "snp_alt_allele", "snp_eff_allele")
+```
+
+*calculate distance between snp and gene*
+```{r}
+snps_genes_eqtls_placenta$snp_location_gene <- ifelse(snps_genes_eqtls_placenta$snp_pos < snps_genes_eqtls_placenta$gene_start_pos, "upstream", 
+       ifelse(snps_genes_eqtls_placenta$snp_pos > snps_genes_eqtls_placenta$gene_end_pos, "downstream", "gene_body"))
+
+snps_genes_eqtls_placenta$snp_distance_gene <- case_when(
+  snps_genes_eqtls_placenta$snp_location_gene == "upstream" ~ snps_genes_eqtls_placenta$snp_pos - snps_genes_eqtls_placenta$gene_start_pos,
+  snps_genes_eqtls_placenta$snp_location_gene == "downstream" ~ snps_genes_eqtls_placenta$snp_pos - snps_genes_eqtls_placenta$gene_end_pos)
+snps_genes_eqtls_placenta["snp_distance_gene"][is.na(snps_genes_eqtls_placenta["snp_distance_gene"])] <- 0
+```
+
+```{r}
+snps_genes_eqtls_placenta$distance_gene_start <- abs(snps_genes_eqtls_placenta$snp_pos - snps_genes_eqtls_placenta$gene_start_pos)
+snps_genes_eqtls_placenta$distance_gene_end <- abs(snps_genes_eqtls_placenta$snp_pos - snps_genes_eqtls_placenta$gene_end_pos)
+
+snps_genes_eqtls_placenta$closer_to <- ifelse(snps_genes_eqtls_placenta$distance_gene_start < snps_genes_eqtls_placenta$distance_gene_end, "start", "end")
+snps_genes_eqtls_placenta[snps_genes_eqtls_placenta$distance_gene_start == snps_genes_eqtls_placenta$distance_gene_end, ] # just a check that distance to start and end is not exactly the same
+```
+
+```{r}
+prop.table(table(snps_genes_eqtls_placenta$closer_to))
+table(snps_genes_eqtls_placenta$snp_location_gene)
+prop.table(table(snps_genes_eqtls_placenta$snp_location_gene))
+
+eqtl_hist_distance_snp_gene_placenta <-
+  hist_plot(snps_genes_eqtls_placenta, "snp_distance_gene", xtitle = "distance (bp) between SNP and Gene", ytitle = "count (number of associations)", title = "Placenta eQTLs") +
+  scale_y_continuous(breaks=seq(0,800, by = 100)) +
+  scale_x_continuous(breaks=seq(-1000000,1000000, by = 100000),
+        labels=c("-1Mb", "-900Kb", "-800Kb", "-700Kb", "-600Kb", "-500Kb", "-400Kb", "-300Kb", "-200Kb", "-100Kb", "0", "100Kb", "200Kb", "300Kb", "400Kb", "500Kb", "600Kb", "700Kb", "800Kb", "900Kb", "1Mb"))
+
+cat("\n Percentage of values < 10,000 bp away:", sum(snps_genes_eqtls_placenta$snp_distance_gene < 10000 & snps_genes_eqtls_placenta$snp_distance_gene > -10000)/length(snps_genes_eqtls_placenta$snp_distance_gene))
+
+```
+
+```{r}
+psych::describe(abs(snps_genes_eqtls_placenta$snp_distance_gene))
+summary(abs(snps_genes_eqtls_placenta$snp_distance_gene))
+
+cat("75% quantile for eQTL's distance is", quantile(abs(snps_genes_eqtls_placenta$snp_distance_gene), probs = 0.75))
+```
+
+#### CVS
+first get eQTL SNP-gene pairs
+```{r}
+snps_genes_eqtls_cvs <- bme_eqtl_cvs_clumped[ ,c("eSNPs", "eGene")]
+```
+
+get position information
+```{r}
+snps_genes_eqtls_cvs <- merge(snps_genes_eqtls_cvs, annotation_genes_cvs_rna, by.x="eGene", by.y="ensembl_gene_id")
+snps_genes_eqtls_cvs <- merge(snps_genes_eqtls_cvs, geno_info[,-3], by.x="eSNPs", by.y="snp.name")
+
+names(snps_genes_eqtls_cvs) <- c("snp", "gene", "gene_chr", "gene_start_pos", "gene_end_pos", "gene_symbol", "snp_chr", "snp_pos", "snp_alt_allele", "snp_eff_allele")
+snps_genes_eqtls_cvs$snp_end_pos <- snps_genes_eqtls_cvs$snp_pos + 1
+```
+
+*calculate distance between snp and gene*
+```{r}
+snps_genes_eqtls_cvs$snp_location_gene <- ifelse(snps_genes_eqtls_cvs$snp_pos < snps_genes_eqtls_cvs$gene_start_pos, "upstream", 
+       ifelse(snps_genes_eqtls_cvs$snp_pos > snps_genes_eqtls_cvs$gene_end_pos, "downstream", "gene_body"))
+
+snps_genes_eqtls_cvs$snp_distance_gene <- case_when(
+  snps_genes_eqtls_cvs$snp_location_gene == "upstream" ~ snps_genes_eqtls_cvs$snp_pos - snps_genes_eqtls_cvs$gene_start_pos,
+  snps_genes_eqtls_cvs$snp_location_gene == "downstream" ~ snps_genes_eqtls_cvs$snp_pos - snps_genes_eqtls_cvs$gene_end_pos)
+snps_genes_eqtls_cvs["snp_distance_gene"][is.na(snps_genes_eqtls_cvs["snp_distance_gene"])] <- 0
+```
+
+```{r}
+snps_genes_eqtls_cvs$distance_gene_start <- abs(snps_genes_eqtls_cvs$snp_pos - snps_genes_eqtls_cvs$gene_start_pos)
+snps_genes_eqtls_cvs$distance_gene_end <- abs(snps_genes_eqtls_cvs$snp_pos - snps_genes_eqtls_cvs$gene_end_pos)
+
+snps_genes_eqtls_cvs$closer_to <- ifelse(snps_genes_eqtls_cvs$distance_gene_start < snps_genes_eqtls_cvs$distance_gene_end, "start", "end")
+snps_genes_eqtls_cvs[snps_genes_eqtls_cvs$distance_gene_start == snps_genes_eqtls_cvs$distance_gene_end, ] # just a check that distance to start and end is not exactly the same
+```
+
+```{r}
+prop.table(table(snps_genes_eqtls_cvs$closer_to))
+table(snps_genes_eqtls_cvs$snp_location_gene)
+prop.table(table(snps_genes_eqtls_cvs$snp_location_gene))
+
+eqtl_hist_distance_snp_gene_cvs <-
+  hist_plot(snps_genes_eqtls_cvs, "snp_distance_gene", xtitle = "distance (bp) between SNP and Gene", ytitle = "count (number of associations)", title = "CVS eQTLs") +
+  scale_y_continuous(breaks=seq(0,8, by = 1)) +
+  scale_x_continuous(breaks=seq(-50000,50000, by = 10000),
+                     labels=c("-50Kb", "-40Kb", "-30Kb", "-20Kb", "-10Kb", "0", "10Kb", "20Kb", "30Kb", "40Kb", "50Kb"))
+
+cat("\n Percentage of values < 10,000 bp away:", sum(snps_genes_eqtls_cvs$snp_distance_gene < 10000 & snps_genes_eqtls_cvs$snp_distance_gene > -10000)/length(snps_genes_eqtls_cvs$snp_distance_gene))
+```
+```{r}
+describe(abs(snps_genes_eqtls_cvs$snp_distance_gene))
+summary(abs(snps_genes_eqtls_cvs$snp_distance_gene))
+cat("75% quantile for eQTL's distance is", quantile(abs(snps_genes_eqtls_cvs$snp_distance_gene), probs = 0.75))
+```
+
+### meqtls
+
+#### Placenta
+first get eQTL SNP-gene pairs
+```{r}
+snps_cpgs_meqtls_placenta <- bme_meqtl_placenta_clumped[ ,c("eSNPs", "eGene")]
+colnames(snps_cpgs_meqtls_placenta) <- c("eSNPs", "CpG")
+```
+
+```{r}
+snps_cpgs_meqtls_placenta <- merge(snps_cpgs_meqtls_placenta, annotation_placenta_meth[,c("chr", "pos", "strand", "Name", "Relation_to_Island")], by.x="CpG", by.y="Name")
+snps_cpgs_meqtls_placenta <- merge(snps_cpgs_meqtls_placenta, geno_info[,-3], by.x="eSNPs", by.y="snp.name")
+
+names(snps_cpgs_meqtls_placenta) <- c("snp", "cpg", "cpg_chr", "cpg_pos", "cpg_strand", "cpg_relation_island", "snp_chr", "snp_pos", "snp_alt_allele", "snp_eff_allele")
+```
+
+*calculate distance between snp and cpg*
+```{r}
+snps_cpgs_meqtls_placenta$snp_distance_cpg <- snps_cpgs_meqtls_placenta$snp_pos - snps_cpgs_meqtls_placenta$cpg_pos
+```
+
+```{r}
+quantile(snps_cpgs_meqtls_placenta$snp_distance_cpg) #probs = seq(0, 1, 1/10)
+
+meqtl_hist_distance_snp_cpg_placenta <-
+  hist_plot(snps_cpgs_meqtls_placenta, "snp_distance_cpg", xtitle = "distance (bp) between SNP and CpG", ytitle = "count (number of associations)", title = "Placenta meQTLs") +
+  scale_y_continuous(breaks=seq(0,60000, by = 10000)) +
+  scale_x_continuous(breaks=seq(-150000,150000, by = 50000),
+                     labels=c("-150Kb", "-100Kb", "-50Kb", "0", "50Kb", "100Kb", "150Kb"))
+
+cat("75% quantile for meQTL's distance is", quantile(abs(snps_cpgs_meqtls_placenta$snp_distance_cpg), probs = 0.75))
+cat("\n Percentage of values < 10,000 bp away:", sum(snps_cpgs_meqtls_placenta$snp_distance_cpg < 10000 & snps_cpgs_meqtls_placenta$snp_distance_cpg > -10000)/length(snps_cpgs_meqtls_placenta$snp_distance_cpg))
+```
+```{r}
+describe(abs(snps_cpgs_meqtls_placenta$snp_distance_cpg))
+summary(abs(snps_cpgs_meqtls_placenta$snp_distance_cpg))
+cat("75% quantile for meQTL's distance is", quantile(abs(snps_cpgs_meqtls_placenta$snp_distance_cpg), probs = 0.75))
+```
+
+#### cvs
+first get meQTL SNP-gene pairs
+```{r}
+snps_cpgs_meqtls_cvs <- bme_meqtl_cvs_clumped[ ,c("eSNPs", "eGene")]
+colnames(snps_cpgs_meqtls_cvs) <- c("eSNPs", "CpG")
+```
+
+```{r}
+snps_cpgs_meqtls_cvs <- merge(snps_cpgs_meqtls_cvs, annotation_cvs_meth[,c("chr", "pos", "strand", "Name", "Relation_to_Island")], by.x="CpG", by.y="Name")
+snps_cpgs_meqtls_cvs <- merge(snps_cpgs_meqtls_cvs, geno_info[,-3], by.x="eSNPs", by.y="snp.name")
+
+names(snps_cpgs_meqtls_cvs) <- c("snp", "cpg", "cpg_chr", "cpg_pos", "cpg_strand", "cpg_relation_island", "snp_chr", "snp_pos", "snp_alt_allele", "snp_eff_allele")
+```
+
+*calculate distance between snp and cpg*
+```{r}
+snps_cpgs_meqtls_cvs$snp_distance_cpg <- snps_cpgs_meqtls_cvs$snp_pos - snps_cpgs_meqtls_cvs$cpg_pos
+```
+
+```{r}
+quantile(snps_cpgs_meqtls_cvs$snp_distance_cpg) #probs = seq(0, 1, 1/10)
+
+meqtl_hist_distance_snp_cpg_cvs <-
+  hist_plot(snps_cpgs_meqtls_cvs, "snp_distance_cpg", xtitle = "distance (bp) between SNP and CpG", ytitle = "count (number of associations)", title = "CVS meQTLs") +
+  scale_y_continuous(breaks=seq(0,30000, by = 10000)) +
+  scale_x_continuous(breaks=seq(-150000,150000, by = 50000),
+                     labels=c("-150Kb", "-100Kb", "-50Kb", "0", "50Kb", "100Kb", "150Kb"))
+
+
+cat("75% quantile for meQTL's distance is", quantile(snps_cpgs_meqtls_cvs$snp_distance_cpg, probs = 0.75))
+cat("\n Percentage of values < 10,000 bp away:", sum(snps_cpgs_meqtls_cvs$snp_distance_cpg < 10000 & snps_cpgs_meqtls_cvs$snp_distance_cpg > -10000)/length(snps_cpgs_meqtls_cvs$snp_distance_cpg))
+```
+```{r}
+describe(abs(snps_cpgs_meqtls_cvs$snp_distance_cpg))
+summary(abs(snps_cpgs_meqtls_cvs$snp_distance_cpg))
+cat("75% quantile for meQTL's distance is", quantile(abs(snps_cpgs_meqtls_cvs$snp_distance_cpg), probs = 0.75))
+```
+
+### eQTMs
+#### Placenta
+first get eqtm cpg-gene pairs
+```{r}
+cpgs_genes_eqtms_placenta <- bme_eqtm_placenta[ ,c("eSNPs", "eGene", "corrected_beta")]
+```
+
+add position info
+```{r}
+cpgs_genes_eqtms_placenta <- merge(cpgs_genes_eqtms_placenta, annotation_genes_placenta_rna, by.x="eGene", by.y="ensembl_gene_id")
+cpgs_genes_eqtms_placenta <- merge(cpgs_genes_eqtms_placenta, annotation_placenta_meth[,c("chr", "pos", "strand", "Name", "Relation_to_Island")], by.x="eSNPs", by.y="Name")
+
+names(cpgs_genes_eqtms_placenta) <- c("cpg", "gene", "corrected_beta", "gene_chr", "gene_start_pos", "gene_end_pos", "gene_symbol", "cpg_chr", "cpg_pos", "cpg_strand", "cpg_relation_to_island")
+```
+
+*calculate distance between cpg and gene*
+```{r}
+cpgs_genes_eqtms_placenta$cpg_location_gene <- ifelse(cpgs_genes_eqtms_placenta$cpg_pos < cpgs_genes_eqtms_placenta$gene_start_pos, "upstream", 
+       ifelse(cpgs_genes_eqtms_placenta$cpg_pos > cpgs_genes_eqtms_placenta$gene_end_pos, "downstream", "gene_body"))
+
+cpgs_genes_eqtms_placenta$cpg_distance_gene <- case_when(
+  cpgs_genes_eqtms_placenta$cpg_location_gene == "upstream" ~ cpgs_genes_eqtms_placenta$cpg_pos - cpgs_genes_eqtms_placenta$gene_start_pos,
+  cpgs_genes_eqtms_placenta$cpg_location_gene == "downstream" ~ cpgs_genes_eqtms_placenta$cpg_pos - cpgs_genes_eqtms_placenta$gene_end_pos)
+cpgs_genes_eqtms_placenta["cpg_distance_gene"][is.na(cpgs_genes_eqtms_placenta["cpg_distance_gene"])] <- 0
+```
+
+```{r}
+cpgs_genes_eqtms_placenta$distance_gene_start <- abs(cpgs_genes_eqtms_placenta$cpg_pos - cpgs_genes_eqtms_placenta$gene_start_pos)
+cpgs_genes_eqtms_placenta$distance_gene_end <- abs(cpgs_genes_eqtms_placenta$cpg_pos - cpgs_genes_eqtms_placenta$gene_end_pos)
+
+cpgs_genes_eqtms_placenta$closer_to <- ifelse(cpgs_genes_eqtms_placenta$distance_gene_start < cpgs_genes_eqtms_placenta$distance_gene_end, "start", "end")
+cpgs_genes_eqtms_placenta[cpgs_genes_eqtms_placenta$distance_gene_start == cpgs_genes_eqtms_placenta$distance_gene_end, ] # just a check that distance to start and end is not exactly the same
+```
+
+```{r}
+prop.table(table(cpgs_genes_eqtms_placenta$closer_to))
+table(cpgs_genes_eqtms_placenta$cpg_location_gene)
+prop.table(table(cpgs_genes_eqtms_placenta$cpg_location_gene))
+
+eqtm_hist_distance_cpg_gene_placenta <-
+  hist_plot(cpgs_genes_eqtms_placenta, "cpg_distance_gene", xtitle = "distance (bp) between CpG and Gene", ytitle = "count (number of associations)", title = "Placenta eQTMs") +
+  scale_y_continuous(breaks=seq(0,6000, by = 1000)) +
+  scale_x_continuous(breaks=seq(-150000,150000, by = 50000),
+        labels=c("-150Kb", "-100Kb", "-50Kb", "0", "50Kb", "100Kb", "150Kb"))
+
+cat("\n Percentage of values < 10,000 bp away:", sum(cpgs_genes_eqtms_placenta$cpg_distance_gene < 10000 & cpgs_genes_eqtms_placenta$cpg_distance_gene > -10000)/length(cpgs_genes_eqtms_placenta$cpg_distance_gene))
+```
+```{r}
+describe(abs(cpgs_genes_eqtms_placenta$cpg_distance_gene))
+summary(abs(cpgs_genes_eqtms_placenta$cpg_distance_gene))
+cat("75% quantile for eQTM's distance is", quantile(abs(cpgs_genes_eqtms_placenta$cpg_distance_gene), probs = 0.75))
+```
+
+#### cvs
+first get eqtm cpg-gene pairs
+```{r}
+cpgs_genes_eqtms_cvs <- bme_eqtm_cvs[ ,c("eSNPs", "eGene", "corrected_beta")]
+```
+
+add position info
+```{r}
+cpgs_genes_eqtms_cvs <- merge(cpgs_genes_eqtms_cvs, annotation_genes_cvs_rna, by.x="eGene", by.y="ensembl_gene_id")
+cpgs_genes_eqtms_cvs <- merge(cpgs_genes_eqtms_cvs, annotation_cvs_meth[,c("chr", "pos", "strand", "Name", "Relation_to_Island")], by.x="eSNPs", by.y="Name")
+
+names(cpgs_genes_eqtms_cvs) <- c("cpg", "gene", "corrected_beta", "gene_chr", "gene_start_pos", "gene_end_pos", "gene_symbol", "cpg_chr", "cpg_pos", "cpg_strand", "cpg_relation_to_island")
+```
+
+*calculate distance between cpg and gene*
+```{r}
+cpgs_genes_eqtms_cvs$cpg_location_gene <- ifelse(cpgs_genes_eqtms_cvs$cpg_pos < cpgs_genes_eqtms_cvs$gene_start_pos, "upstream", 
+       ifelse(cpgs_genes_eqtms_cvs$cpg_pos > cpgs_genes_eqtms_cvs$gene_end_pos, "downstream", "gene_body"))
+
+cpgs_genes_eqtms_cvs$cpg_distance_gene <- case_when(
+  cpgs_genes_eqtms_cvs$cpg_location_gene == "upstream" ~ cpgs_genes_eqtms_cvs$cpg_pos - cpgs_genes_eqtms_cvs$gene_start_pos,
+  cpgs_genes_eqtms_cvs$cpg_location_gene == "downstream" ~ cpgs_genes_eqtms_cvs$cpg_pos - cpgs_genes_eqtms_cvs$gene_end_pos)
+cpgs_genes_eqtms_cvs["cpg_distance_gene"][is.na(cpgs_genes_eqtms_cvs["cpg_distance_gene"])] <- 0
+```
+
+```{r}
+cpgs_genes_eqtms_cvs$distance_gene_start <- abs(cpgs_genes_eqtms_cvs$cpg_pos - cpgs_genes_eqtms_cvs$gene_start_pos)
+cpgs_genes_eqtms_cvs$distance_gene_end <- abs(cpgs_genes_eqtms_cvs$cpg_pos - cpgs_genes_eqtms_cvs$gene_end_pos)
+
+cpgs_genes_eqtms_cvs$closer_to <- ifelse(cpgs_genes_eqtms_cvs$distance_gene_start < cpgs_genes_eqtms_cvs$distance_gene_end, "start", "end")
+cpgs_genes_eqtms_cvs[cpgs_genes_eqtms_cvs$distance_gene_start == cpgs_genes_eqtms_cvs$distance_gene_end, ] # just a check that distance to start and end is not exactly the same
+```
+
+```{r}
+prop.table(table(cpgs_genes_eqtms_cvs$closer_to))
+table(cpgs_genes_eqtms_cvs$cpg_location_gene)
+prop.table(table(cpgs_genes_eqtms_cvs$cpg_location_gene))
+
+eqtm_hist_distance_cpg_gene_cvs <-
+  hist_plot(cpgs_genes_eqtms_cvs, "cpg_distance_gene", xtitle = "distance (bp) between CpG and Gene", ytitle = "count (number of associations)", title = "CVS eQTMs") +
+  scale_y_continuous(breaks=seq(0,30, by = 10)) +
+    scale_x_continuous(breaks=seq(-150000,150000, by = 50000),
+        labels=c("-150Kb", "-100Kb", "-50Kb", "0", "50Kb", "100Kb", "150Kb"))
+
+cat("\n Percentage of values < 10,000 bp away:", sum(cpgs_genes_eqtms_cvs$cpg_distance_gene < 10000 & cpgs_genes_eqtms_cvs$cpg_distance_gene > -10000)/length(cpgs_genes_eqtms_cvs$cpg_distance_gene))
+```
+```{r}
+describe(abs(cpgs_genes_eqtms_cvs$cpg_distance_gene))
+summary(abs(cpgs_genes_eqtms_cvs$cpg_distance_gene))
+cat("75% quantile for eQTM's distance is", quantile(abs(cpgs_genes_eqtms_cvs$cpg_distance_gene), probs = 0.75))
+```
+### Plot
+eQTL SNPs
+```{r}
+eqtl_hist_distance_snp_gene_placenta
+eqtl_hist_distance_snp_gene_cvs
+meqtl_hist_distance_snp_cpg_placenta
+meqtl_hist_distance_snp_cpg_cvs
+eqtm_hist_distance_cpg_gene_placenta
+eqtm_hist_distance_cpg_gene_cvs
+```
+
+```{r}
+eqtl_meqtl_snps_distances_plot <- plot_grid(eqtl_hist_distance_snp_gene_placenta, eqtl_hist_distance_snp_gene_cvs, meqtl_hist_distance_snp_cpg_placenta, meqtl_hist_distance_snp_cpg_cvs,eqtm_hist_distance_cpg_gene_placenta, eqtm_hist_distance_cpg_gene_cvs, ncol=2, align = "v", labels=c('a', 'b', 'c', 'd', 'e', 'f'))
+```
+
+```{r}
+ggsave(here("Analyses/Results/AnnotationInfos/", "eQTLs_meQTLs_eQTMs_distances_plot.pdf"),
+eqtl_meqtl_snps_distances_plot, width=standard_width_mm_single, height=standard_height_mm/2, units="mm", dpi=600, scale=2, device = cairo_pdf)
+```
+
+################################################################################
+## locations in Genes
+*ChipSeeker:*
+
+### all SNPs
+*Info for all SNPs we have:*
+```{r}
+# this is just formatting for ChipSeeker
+geno_info_snps_input <- geno_info
+geno_info_snps_input$chromosome <- paste("chr", geno_info_snps_input$chromosome, sep="")
+```
+
+```{r}
+snps_to_map_all <- makeGRangesFromDataFrame(geno_info_snps_input, start.field = "position", end.field = "position", seqnames = "chromosome", ignore.strand = T, keep.extra.columns = F)
+```
+
+```{r}
+snps_anno_all <- annotatePeak(snps_to_map_all, TxDb=TxDb.Hsapiens.UCSC.hg19.knownGene, annoDb="org.Hs.eg.db", tssRegion = c(-500, 500))
+```
+
+```{r}
+data_snps_anno_all <- as.data.frame(as.GRanges(snps_anno_all))
+```
+
+```{r}
+anno_snps_all <- data_snps_anno_all$annotation
+anno_snps_all <- group_as_chipseeker(anno_snps_all)
+
+data_snps_anno_all$annotation <- anno_snps_all
+```
+
+```{r}
+anno_snps_all <- data_snps_anno_all$annotation
+anno_snps_all <- group_exons_introns(anno_snps_all)
+
+data_snps_anno_all$anno_grouped <- anno_snps_all
+```
+
+```{r}
+anno_snps_all <- data_snps_anno_all$annotation
+anno_snps_all <- group_transcribed_regions(anno_snps_all)
+
+data_snps_anno_all$anno_grouped_transcribed <- anno_snps_all
+```
+
+### eQTL SNPs
+#### Placenta
+*Info for all SNPs which are NOT eQTLs:*
+```{r}
+# this is just formatting for ChipSeeker
+geno_info_placenta_no_eqtls <- subset(geno_info, !(snp.name %in% bme_eqtl_placenta_clumped$eSNPs))
+geno_info_placenta_no_eqtls$chromosome <- paste("chr", geno_info_placenta_no_eqtls$chromosome, sep="")
+```
+
+```{r}
+snps_to_map_placenta_no_eqtls <- makeGRangesFromDataFrame(geno_info_placenta_no_eqtls, start.field = "position", end.field = "position", seqnames = "chromosome", ignore.strand = T, keep.extra.columns = F)
+```
+
+```{r}
+snps_anno_placenta_no_eqtls <- annotatePeak(snps_to_map_placenta_no_eqtls, TxDb=TxDb.Hsapiens.UCSC.hg19.knownGene, annoDb="org.Hs.eg.db", tssRegion = c(-500, 500))
+```
+
+```{r}
+data_snps_anno_placenta_no_eqtls <- as.data.frame(as.GRanges(snps_anno_placenta_no_eqtls))
+#data_snps_anno_placenta_no_eqtls$snp <- geno_info_placenta_no_eqtls$snp.name
+```
+
+```{r}
+anno_placenta_no_eqtls <- data_snps_anno_placenta_no_eqtls$annotation
+anno_placenta_no_eqtls <- group_as_chipseeker(anno_placenta_no_eqtls)
+
+data_snps_anno_placenta_no_eqtls$annotation <- anno_placenta_no_eqtls
+```
+
+```{r}
+snp_region_mapped_placenta_no_eqtls <- snps_anno_placenta_no_eqtls@detailGenomicAnnotation
+```
+
+*Info for SNPs which ARE eQTLs*
+```{r}
+snps_to_map_placenta_eqtls <- unique(snps_genes_eqtls_placenta[,c("snp", "snp_chr", "snp_pos")])
+rownames(snps_to_map_placenta_eqtls) <- snps_to_map_placenta_eqtls$snp
+snps_to_map_placenta_eqtls$snp_chr <- paste("chr", snps_to_map_placenta_eqtls$snp_chr,sep="")
+snps_to_map_placenta_eqtls <- unique(snps_to_map_placenta_eqtls)
+```
+
+```{r}
+snps_to_map_placenta_eqtls <- makeGRangesFromDataFrame(snps_to_map_placenta_eqtls, start.field = "snp_pos", end.field = "snp_pos", seqnames = "snp_chr", ignore.strand = T, keep.extra.columns = F)
+```
+
+```{r}
+snps_anno_placenta_eqtls <- annotatePeak(snps_to_map_placenta_eqtls, TxDb=TxDb.Hsapiens.UCSC.hg19.knownGene, annoDb="org.Hs.eg.db", tssRegion = c(-500, 500))
+```
+
+```{r}
+data_snps_anno_placenta_eqtls <- as.data.frame(as.GRanges(snps_anno_placenta_eqtls))
+```
+
+```{r}
+anno_placenta_eqtls <- data_snps_anno_placenta_eqtls$annotation
+anno_placenta_eqtls <- group_as_chipseeker(anno_placenta_eqtls)
+
+data_snps_anno_placenta_eqtls$annotation <- anno_placenta_eqtls
+```
+
+```{r}
+snp_region_mapped_eqtl_placenta <- snps_anno_placenta_eqtls@detailGenomicAnnotation
+```
+
+*Plot*
+prepare data
+
+We group 1st/Other Exon and Intron together
+```{r}
+data_snps_anno_placenta_no_eqtls_grouped <- data_snps_anno_placenta_no_eqtls$annotation
+data_snps_anno_placenta_no_eqtls_grouped <- group_exons_introns(data_snps_anno_placenta_no_eqtls_grouped)
+
+data_snps_anno_placenta_no_eqtls$anno_grouped <- data_snps_anno_placenta_no_eqtls_grouped
+```
+```{r}
+data_snps_anno_placenta_eqtls_grouped <- data_snps_anno_placenta_eqtls$annotation
+data_snps_anno_placenta_eqtls_grouped <- group_exons_introns(data_snps_anno_placenta_eqtls_grouped)
+
+data_snps_anno_placenta_eqtls$anno_grouped <-data_snps_anno_placenta_eqtls_grouped
+```
+
+We group Transcribed Regions together (Downstream vs Intergenic vs. Promoter vs Transcribed)
+```{r}
+data_snps_anno_placenta_no_eqtls_grouped_transcribed <- data_snps_anno_placenta_no_eqtls$anno_grouped
+data_snps_anno_placenta_no_eqtls_grouped_transcribed <- group_transcribed_regions(data_snps_anno_placenta_no_eqtls_grouped_transcribed)
+
+data_snps_anno_placenta_no_eqtls$anno_grouped_transcribed <- data_snps_anno_placenta_no_eqtls_grouped_transcribed
+```
+
+```{r}
+data_snps_anno_placenta_eqtls_grouped_transcribed <- data_snps_anno_placenta_eqtls$anno_grouped
+data_snps_anno_placenta_eqtls_grouped_transcribed <- group_transcribed_regions(data_snps_anno_placenta_eqtls_grouped_transcribed)
+
+data_snps_anno_placenta_eqtls$anno_grouped_transcribed <- data_snps_anno_placenta_eqtls_grouped_transcribed
+```
+
+%
+```{r}
+percents_snps_anno_placenta_no_eqtls <- data.frame(prop.table(table(data_snps_anno_placenta_no_eqtls$anno_grouped)))
+names(percents_snps_anno_placenta_no_eqtls) <- c("region", "no eQTL SNP")
+percents_snps_anno_placenta_no_eqtls$region <- factor(percents_snps_anno_placenta_no_eqtls$region, levels = c("Promoter", "5' UTR", "Exon", "Intron", "3' UTR", "Downstream (<=300)", "Distal Intergenic"))
+
+percents_snps_anno_placenta_eqtls <- data.frame(prop.table(table(data_snps_anno_placenta_eqtls$anno_grouped)))
+names(percents_snps_anno_placenta_eqtls) <- c("region", "eQTL SNP")
+percents_snps_anno_placenta_eqtls$region <- factor(percents_snps_anno_placenta_eqtls$region, levels = c("Promoter", "5' UTR", "Exon", "Intron", "3' UTR", "Downstream (<=300)", "Distal Intergenic"))
+
+percents_esnps_anno_placenta <- merge(percents_snps_anno_placenta_no_eqtls, percents_snps_anno_placenta_eqtls, by = "region")
+percents_esnps_anno_placenta <- reshape2::melt(percents_esnps_anno_placenta, id.vars = c("region"))
+```
+
+```{r}
+snps_chipseeker_barplot_eqtls_placenta <- 
+  barplot_snps_regions(data = percents_esnps_anno_placenta, group = variable, yvalues = value, xvalues = region, plottitle = "eQTLs Placenta") 
+```
+
+*Enrichment for Regions*
+are our eQTL SNPs enriched for Promoter region of genes?
+```{r}
+enrichment_permed(data_snps_anno_placenta_eqtls$anno_grouped_transcribed, data_snps_anno_placenta_no_eqtls$anno_grouped_transcribed, "Promoter", 100)
+```
+
+are our eQTL SNPs enriched for transcribed region?
+```{r}
+enrichment_permed(data_snps_anno_placenta_eqtls$anno_grouped_transcribed, data_snps_anno_placenta_no_eqtls$anno_grouped_transcribed, "Transcribed", 100)
+```
+
+odds are increased for eQTL SNPs being in transcribed regions and promoters 
+
+*closest gene vs. eQTL gene*
+Are the mapped Genes also the eQTL Genes?
+
+```{r}
+cat(nrow(data_snps_anno_placenta_eqtls), "eQTL SNPs in Placenta. ")
+# our output data frame from chipseeker has 1066 rows for every snp
+cat(length(unique(data_snps_anno_placenta_eqtls$ENSEMBL)), "unique Gene ENSEMBLs from ChipSeeker. ") # 876 unique gene ensembl IDs
+cat(length(unique(bme_eqtl_placenta_clumped$eGene)), "unique Gene ENSEMBLs from our eQTL data. ")
+```
+
+```{r}
+placenta_eqtl_genes_mapped_to_snps <- merge(snps_genes_eqtls_placenta, data_snps_anno_placenta_eqtls, by.x="snp", by.y="row.names")
+dim(placenta_eqtl_genes_mapped_to_snps)
+placenta_eqtl_genes_mapped_to_snps$same_gene <- ifelse(placenta_eqtl_genes_mapped_to_snps$gene == placenta_eqtl_genes_mapped_to_snps$ENSEMBL, "same", "different")
+table(placenta_eqtl_genes_mapped_to_snps$same_gene) # note: we have NAs if ENSEBL from chipseeker is NA
+prop.table(table(placenta_eqtl_genes_mapped_to_snps$same_gene))
+
+same_genes_mapped_placenta_eqtls <- placenta_eqtl_genes_mapped_to_snps[placenta_eqtl_genes_mapped_to_snps$same_gene == "same", c("gene", "ENSEMBL")]
+cat(nrow(unique(same_genes_mapped_placenta_eqtls)), "genes are the same from eQTLs and ChipSeeker")
+```
+
+#### cvs
+*Info for all SNPs which are NOT eQTLs:*
+```{r}
+# this is just formatting for ChipSeeker
+geno_info_cvs_no_eqtls <- subset(geno_info, !(snp.name %in% bme_eqtl_cvs_clumped$eSNPs))
+geno_info_cvs_no_eqtls$chromosome <- paste("chr", geno_info_cvs_no_eqtls$chromosome, sep="")
+```
+
+```{r}
+snps_to_map_cvs_no_eqtls <- makeGRangesFromDataFrame(geno_info_cvs_no_eqtls, start.field = "position", end.field = "position", seqnames = "chromosome", ignore.strand = T, keep.extra.columns = F)
+```
+
+```{r}
+snps_anno_cvs_no_eqtls <- annotatePeak(snps_to_map_cvs_no_eqtls, TxDb=TxDb.Hsapiens.UCSC.hg19.knownGene, annoDb="org.Hs.eg.db", tssRegion = c(-500, 500))
+```
+
+```{r}
+data_snps_anno_cvs_no_eqtls <- as.data.frame(as.GRanges(snps_anno_cvs_no_eqtls))
+```
+
+```{r}
+anno_cvs_no_eqtls <- data_snps_anno_cvs_no_eqtls$annotation
+anno_cvs_no_eqtls <- group_as_chipseeker(anno_cvs_no_eqtls)
+
+data_snps_anno_cvs_no_eqtls$annotation <- anno_cvs_no_eqtls
+```
+
+```{r}
+snp_region_mapped_cvs_no_eqtls <- snps_anno_cvs_no_eqtls@detailGenomicAnnotation
+```
+
+*Info for SNPs which ARE eQTLs*
+```{r}
+snps_to_map_cvs_eqtls <- unique(snps_genes_eqtls_cvs[,c("snp", "snp_chr", "snp_pos")])
+rownames(snps_to_map_cvs_eqtls) <- snps_to_map_cvs_eqtls$snp
+snps_to_map_cvs_eqtls$snp_chr <- paste("chr", snps_to_map_cvs_eqtls$snp_chr,sep="")
+snps_to_map_cvs_eqtls <- unique(snps_to_map_cvs_eqtls)
+```
+
+```{r}
+snps_to_map_cvs_eqtls <- makeGRangesFromDataFrame(snps_to_map_cvs_eqtls, start.field = "snp_pos", end.field = "snp_pos", seqnames = "snp_chr", ignore.strand = T, keep.extra.columns = F)
+```
+
+```{r}
+snps_anno_cvs_eqtls <- annotatePeak(snps_to_map_cvs_eqtls, TxDb=TxDb.Hsapiens.UCSC.hg19.knownGene, annoDb="org.Hs.eg.db", tssRegion = c(-500, 500))
+```
+
+```{r}
+data_snps_anno_cvs_eqtls <- as.data.frame(as.GRanges(snps_anno_cvs_eqtls))
+```
+
+```{r}
+anno_cvs_eqtls <- data_snps_anno_cvs_eqtls$annotation
+anno_cvs_eqtls <- group_as_chipseeker(anno_cvs_eqtls)
+
+data_snps_anno_cvs_eqtls$annotation <- anno_cvs_eqtls
+```
+
+```{r}
+snp_region_mapped_eqtl_cvs <- snps_anno_cvs_eqtls@detailGenomicAnnotation
+```
+
+*Plot*
+prepare data
+
+We group 1st/Other Exon and Intron together
+```{r}
+data_snps_anno_cvs_no_eqtls_grouped <- data_snps_anno_cvs_no_eqtls$annotation
+data_snps_anno_cvs_no_eqtls_grouped <- group_exons_introns(data_snps_anno_cvs_no_eqtls_grouped)
+
+data_snps_anno_cvs_no_eqtls$anno_grouped <- data_snps_anno_cvs_no_eqtls_grouped
+```
+```{r}
+data_snps_anno_cvs_eqtls_grouped <- data_snps_anno_cvs_eqtls$annotation
+data_snps_anno_cvs_eqtls_grouped <- group_exons_introns(data_snps_anno_cvs_eqtls_grouped)
+
+data_snps_anno_cvs_eqtls$anno_grouped <-data_snps_anno_cvs_eqtls_grouped
+```
+
+We group Transcribed Regions together (Downstream vs Intergenic vs. Promoter vs Transcribed)
+```{r}
+data_snps_anno_cvs_no_eqtls_grouped_transcribed <- data_snps_anno_cvs_no_eqtls$anno_grouped
+data_snps_anno_cvs_no_eqtls_grouped_transcribed <- group_transcribed_regions(data_snps_anno_cvs_no_eqtls_grouped_transcribed)
+
+data_snps_anno_cvs_no_eqtls$anno_grouped_transcribed <- data_snps_anno_cvs_no_eqtls_grouped_transcribed
+```
+
+```{r}
+data_snps_anno_cvs_eqtls_grouped_transcribed <- data_snps_anno_cvs_eqtls$anno_grouped
+data_snps_anno_cvs_eqtls_grouped_transcribed <- group_transcribed_regions(data_snps_anno_cvs_eqtls_grouped_transcribed)
+
+data_snps_anno_cvs_eqtls$anno_grouped_transcribed <- data_snps_anno_cvs_eqtls_grouped_transcribed
+```
+
+%
+```{r}
+percents_snps_anno_cvs_no_eqtls <- data.frame(prop.table(table(data_snps_anno_cvs_no_eqtls$anno_grouped)))
+names(percents_snps_anno_cvs_no_eqtls) <- c("region", "no eQTL SNP")
+percents_snps_anno_cvs_no_eqtls$region <- factor(percents_snps_anno_cvs_no_eqtls$region,levels = c("Promoter", "5' UTR", "Exon", "Intron", "3' UTR", "Downstream (<=300)", "Distal Intergenic"))
+
+percents_snps_anno_cvs_eqtls <- data.frame(prop.table(table(data_snps_anno_cvs_eqtls$anno_grouped)))
+names(percents_snps_anno_cvs_eqtls) <- c("region", "eQTL SNP")
+percents_snps_anno_cvs_eqtls$region <- factor(percents_snps_anno_cvs_eqtls$region, levels = c("Exon", "Intron", "Distal Intergenic"))
+
+percents_esnps_anno_cvs <- merge(percents_snps_anno_cvs_no_eqtls, percents_snps_anno_cvs_eqtls, by = "region", all =T)
+percents_esnps_anno_cvs <- reshape2::melt(percents_esnps_anno_cvs, id.vars = c("region"))
+```
+
+```{r}
+snps_chipseeker_barplot_eqtls_cvs <- 
+  barplot_snps_regions(data = percents_esnps_anno_cvs, group = variable, yvalues = value, xvalues = region, plottitle = "eQTLs CVS") 
+```
+
+
+*closest gene vs. eQTL gene*
+Are the mapped Genes also the eQTL Genes?
+
+```{r}
+cat(nrow(data_snps_anno_cvs_eqtls), "eQTL SNPs in cvs. ")
+# our output data frame from chipseeker has 1066 rows for every snp
+cat(length(unique(data_snps_anno_cvs_eqtls$ENSEMBL)), "unique Gene ENSEMBLs from ChipSeeker. ") # 876 unique gene ensembl IDs
+cat(length(unique(bme_eqtl_cvs_clumped$eGene)), "unique Gene ENSEMBLs from our eQTL data. ")
+```
+
+```{r}
+cvs_eqtl_genes_mapped_to_snps <- merge(snps_genes_eqtls_cvs, data_snps_anno_cvs_eqtls, by.x="snp", by.y="row.names")
+dim(cvs_eqtl_genes_mapped_to_snps)
+cvs_eqtl_genes_mapped_to_snps$same_gene <- ifelse(cvs_eqtl_genes_mapped_to_snps$gene == cvs_eqtl_genes_mapped_to_snps$ENSEMBL, "same", "different")
+table(cvs_eqtl_genes_mapped_to_snps$same_gene) # note: we have NAs if ENSEBL from chipseeker is NA
+prop.table(table(cvs_eqtl_genes_mapped_to_snps$same_gene))
+
+same_genes_mapped_cvs_eqtls <- cvs_eqtl_genes_mapped_to_snps[cvs_eqtl_genes_mapped_to_snps$same_gene == "same", c("gene", "ENSEMBL")]
+cat(nrow(unique(same_genes_mapped_cvs_eqtls)), "genes are the same from eQTLs and ChipSeeker")
+```
+
+### meQTL SNPs
+#### Placenta
+
+*Info for all SNPs which are NOT meqtls:*
+```{r}
+# this is just formatting for ChipSeeker
+geno_info_placenta_no_meqtls <- subset(geno_info, !(snp.name %in% bme_meqtl_placenta_clumped$eSNPs))
+geno_info_placenta_no_meqtls$chromosome <- paste("chr", geno_info_placenta_no_meqtls$chromosome, sep="")
+```
+
+```{r}
+snps_to_map_placenta_no_meqtls <- makeGRangesFromDataFrame(geno_info_placenta_no_meqtls, start.field = "position", end.field = "position", seqnames = "chromosome", ignore.strand = T, keep.extra.columns = F)
+```
+
+```{r}
+snps_anno_placenta_no_meqtls <- annotatePeak(snps_to_map_placenta_no_meqtls, TxDb=TxDb.Hsapiens.UCSC.hg19.knownGene, annoDb="org.Hs.eg.db", tssRegion = c(-500, 500))
+```
+
+```{r}
+data_snps_anno_placenta_no_meqtls <- as.data.frame(as.GRanges(snps_anno_placenta_no_meqtls))
+```
+
+```{r}
+anno_placenta_no_meqtls <- data_snps_anno_placenta_no_meqtls$annotation
+anno_placenta_no_meqtls <- group_as_chipseeker(anno_placenta_no_meqtls)
+
+data_snps_anno_placenta_no_meqtls$annotation <- anno_placenta_no_meqtls
+```
+
+```{r}
+snp_region_mapped_placenta_no_meqtls <- snps_anno_placenta_no_meqtls@detailGenomicAnnotation
+```
+
+*Info for SNPs which ARE meqtls*
+```{r}
+snps_to_map_placenta_meqtls <- unique(snps_cpgs_meqtls_placenta[,c("snp", "snp_chr", "snp_pos")])
+rownames(snps_to_map_placenta_meqtls) <- snps_to_map_placenta_meqtls$snp
+snps_to_map_placenta_meqtls$snp_chr <- paste("chr", snps_to_map_placenta_meqtls$snp_chr,sep="")
+snps_to_map_placenta_meqtls <- unique(snps_to_map_placenta_meqtls)
+```
+
+```{r}
+snps_to_map_placenta_meqtls <- makeGRangesFromDataFrame(snps_to_map_placenta_meqtls, start.field = "snp_pos", end.field = "snp_pos", seqnames = "snp_chr", ignore.strand = T, keep.extra.columns = F)
+```
+
+```{r}
+snps_anno_placenta_meqtls <- annotatePeak(snps_to_map_placenta_meqtls, TxDb=TxDb.Hsapiens.UCSC.hg19.knownGene, annoDb="org.Hs.eg.db", tssRegion = c(-500, 500))
+```
+
+```{r}
+data_snps_anno_placenta_meqtls <- as.data.frame(as.GRanges(snps_anno_placenta_meqtls))
+```
+
+```{r}
+anno_placenta_meqtls <- data_snps_anno_placenta_meqtls$annotation
+anno_placenta_meqtls <- group_as_chipseeker(anno_placenta_meqtls)
+
+data_snps_anno_placenta_meqtls$annotation <- anno_placenta_meqtls
+```
+
+```{r}
+snp_region_mapped_meqtl_placenta <- snps_anno_placenta_meqtls@detailGenomicAnnotation
+```
+
+*Plot*
+prepare data
+
+We group 1st/Other Exon and Intron together
+```{r}
+data_snps_anno_placenta_no_meqtls_grouped <- data_snps_anno_placenta_no_meqtls$annotation
+data_snps_anno_placenta_no_meqtls_grouped <- group_exons_introns(data_snps_anno_placenta_no_meqtls_grouped)
+
+data_snps_anno_placenta_no_meqtls$anno_grouped <- data_snps_anno_placenta_no_meqtls_grouped
+```
+```{r}
+data_snps_anno_placenta_meqtls_grouped <- data_snps_anno_placenta_meqtls$annotation
+data_snps_anno_placenta_meqtls_grouped <- group_exons_introns(data_snps_anno_placenta_meqtls_grouped)
+
+data_snps_anno_placenta_meqtls$anno_grouped <-data_snps_anno_placenta_meqtls_grouped
+```
+
+We group Transcribed Regions together (Downstream vs Intergenic vs. Promoter vs Transcribed)
+```{r}
+data_snps_anno_placenta_no_meqtls_grouped_transcribed <- data_snps_anno_placenta_no_meqtls$anno_grouped
+data_snps_anno_placenta_no_meqtls_grouped_transcribed <- group_transcribed_regions(data_snps_anno_placenta_no_meqtls_grouped_transcribed)
+
+data_snps_anno_placenta_no_meqtls$anno_grouped_transcribed <- data_snps_anno_placenta_no_meqtls_grouped_transcribed
+```
+
+```{r}
+data_snps_anno_placenta_meqtls_grouped_transcribed <- data_snps_anno_placenta_meqtls$anno_grouped
+data_snps_anno_placenta_meqtls_grouped_transcribed <- group_transcribed_regions(data_snps_anno_placenta_meqtls_grouped_transcribed)
+
+data_snps_anno_placenta_meqtls$anno_grouped_transcribed <- data_snps_anno_placenta_meqtls_grouped_transcribed
+```
+
+%
+```{r}
+percents_snps_anno_placenta_no_meqtls <- data.frame(prop.table(table(data_snps_anno_placenta_no_meqtls$anno_grouped)))
+names(percents_snps_anno_placenta_no_meqtls) <- c("region", "no meQTL SNP")
+percents_snps_anno_placenta_no_meqtls$region <- factor(percents_snps_anno_placenta_no_meqtls$region, levels = c("Promoter", "5' UTR", "Exon", "Intron", "3' UTR", "Downstream (<=300)", "Distal Intergenic"))
+
+percents_snps_anno_placenta_meqtls <- data.frame(prop.table(table(data_snps_anno_placenta_meqtls$anno_grouped)))
+names(percents_snps_anno_placenta_meqtls) <- c("region", "meQTL SNP")
+percents_snps_anno_placenta_meqtls$region <- factor(percents_snps_anno_placenta_meqtls$region, levels = c("Promoter", "5' UTR", "Exon", "Intron", "3' UTR", "Downstream (<=300)", "Distal Intergenic"))
+
+percents_esnps_anno_placenta <- merge(percents_snps_anno_placenta_no_meqtls, percents_snps_anno_placenta_meqtls, by = "region")
+percents_esnps_anno_placenta <- reshape2::melt(percents_esnps_anno_placenta, id.vars = c("region"))
+```
+
+```{r}
+snps_chipseeker_barplot_meqtls_placenta <- 
+  barplot_snps_regions(data = percents_esnps_anno_placenta, group = variable, yvalues = value, xvalues = region, plottitle = "meQTLs Placenta") 
+```
+
+*Enrichment for Regions*
+are our meqtl SNPs enriched for Promoter region of genes?
+```{r}
+enrichment_permed(data_snps_anno_placenta_meqtls$anno_grouped_transcribed, data_snps_anno_placenta_no_meqtls$anno_grouped_transcribed, "Promoter", 100)
+```
+
+are our meqtl SNPs enriched for transcribed region?
+```{r}
+enrichment_permed(data_snps_anno_placenta_meqtls$anno_grouped_transcribed, data_snps_anno_placenta_no_meqtls$anno_grouped_transcribed, "Transcribed", 100)
+```
+
+
+#### CVS
+*Info for all SNPs which are NOT meqtls:*
+```{r}
+# this is just formatting for ChipSeeker
+geno_info_cvs_no_meqtls <- subset(geno_info, !(snp.name %in% bme_meqtl_cvs_clumped$eSNPs))
+geno_info_cvs_no_meqtls$chromosome <- paste("chr", geno_info_cvs_no_meqtls$chromosome, sep="")
+```
+
+```{r}
+snps_to_map_cvs_no_meqtls <- makeGRangesFromDataFrame(geno_info_cvs_no_meqtls, start.field = "position", end.field = "position", seqnames = "chromosome", ignore.strand = T, keep.extra.columns = F)
+```
+
+```{r}
+snps_anno_cvs_no_meqtls <- annotatePeak(snps_to_map_cvs_no_meqtls, TxDb=TxDb.Hsapiens.UCSC.hg19.knownGene, annoDb="org.Hs.eg.db", tssRegion = c(-500, 500))
+```
+
+```{r}
+data_snps_anno_cvs_no_meqtls <- as.data.frame(as.GRanges(snps_anno_cvs_no_meqtls))
+```
+
+```{r}
+anno_cvs_no_meqtls <- data_snps_anno_cvs_no_meqtls$annotation
+anno_cvs_no_meqtls <- group_as_chipseeker(anno_cvs_no_meqtls)
+
+data_snps_anno_cvs_no_meqtls$annotation <- anno_cvs_no_meqtls
+```
+
+```{r}
+snp_region_mapped_cvs_no_meqtls <- snps_anno_cvs_no_meqtls@detailGenomicAnnotation
+```
+
+*Info for SNPs which ARE meqtls*
+```{r}
+snps_to_map_cvs_meqtls <- unique(snps_cpgs_meqtls_cvs[,c("snp", "snp_chr", "snp_pos")])
+rownames(snps_to_map_cvs_meqtls) <- snps_to_map_cvs_meqtls$snp
+snps_to_map_cvs_meqtls$snp_chr <- paste("chr", snps_to_map_cvs_meqtls$snp_chr,sep="")
+snps_to_map_cvs_meqtls <- unique(snps_to_map_cvs_meqtls)
+```
+
+```{r}
+snps_to_map_cvs_meqtls <- makeGRangesFromDataFrame(snps_to_map_cvs_meqtls, start.field = "snp_pos", end.field = "snp_pos", seqnames = "snp_chr", ignore.strand = T, keep.extra.columns = F)
+```
+
+```{r}
+snps_anno_cvs_meqtls <- annotatePeak(snps_to_map_cvs_meqtls, TxDb=TxDb.Hsapiens.UCSC.hg19.knownGene, annoDb="org.Hs.eg.db", tssRegion = c(-500, 500))
+```
+
+```{r}
+data_snps_anno_cvs_meqtls <- as.data.frame(as.GRanges(snps_anno_cvs_meqtls))
+```
+
+```{r}
+anno_cvs_meqtls <- data_snps_anno_cvs_meqtls$annotation
+anno_cvs_meqtls <- group_as_chipseeker(anno_cvs_meqtls)
+
+data_snps_anno_cvs_meqtls$annotation <- anno_cvs_meqtls
+```
+
+```{r}
+snp_region_mapped_meqtl_cvs <- snps_anno_cvs_meqtls@detailGenomicAnnotation
+```
+
+*Plot*
+prepare data
+
+We group 1st/Other Exon and Intron together
+```{r}
+data_snps_anno_cvs_no_meqtls_grouped <- data_snps_anno_cvs_no_meqtls$annotation
+data_snps_anno_cvs_no_meqtls_grouped <- group_exons_introns(data_snps_anno_cvs_no_meqtls_grouped)
+
+data_snps_anno_cvs_no_meqtls$anno_grouped <- data_snps_anno_cvs_no_meqtls_grouped
+```
+```{r}
+data_snps_anno_cvs_meqtls_grouped <- data_snps_anno_cvs_meqtls$annotation
+data_snps_anno_cvs_meqtls_grouped <- group_exons_introns(data_snps_anno_cvs_meqtls_grouped)
+
+data_snps_anno_cvs_meqtls$anno_grouped <-data_snps_anno_cvs_meqtls_grouped
+```
+
+We group Transcribed Regions together (Downstream vs Intergenic vs. Promoter vs Transcribed)
+```{r}
+data_snps_anno_cvs_no_meqtls_grouped_transcribed <- data_snps_anno_cvs_no_meqtls$anno_grouped
+data_snps_anno_cvs_no_meqtls_grouped_transcribed <- group_transcribed_regions(data_snps_anno_cvs_no_meqtls_grouped_transcribed)
+
+data_snps_anno_cvs_no_meqtls$anno_grouped_transcribed <- data_snps_anno_cvs_no_meqtls_grouped_transcribed
+```
+
+```{r}
+data_snps_anno_cvs_meqtls_grouped_transcribed <- data_snps_anno_cvs_meqtls$anno_grouped
+data_snps_anno_cvs_meqtls_grouped_transcribed <- group_transcribed_regions(data_snps_anno_cvs_meqtls_grouped_transcribed)
+
+data_snps_anno_cvs_meqtls$anno_grouped_transcribed <- data_snps_anno_cvs_meqtls_grouped_transcribed
+```
+
+%
+```{r}
+percents_snps_anno_cvs_no_meqtls <- data.frame(prop.table(table(data_snps_anno_cvs_no_meqtls$anno_grouped)))
+names(percents_snps_anno_cvs_no_meqtls) <- c("region", "no meQTL SNP")
+percents_snps_anno_cvs_no_meqtls$region <- factor(percents_snps_anno_cvs_no_meqtls$region, levels = c("Promoter", "5' UTR", "Exon", "Intron", "3' UTR", "Downstream (<=300)", "Distal Intergenic"))
+
+percents_snps_anno_cvs_meqtls <- data.frame(prop.table(table(data_snps_anno_cvs_meqtls$anno_grouped)))
+names(percents_snps_anno_cvs_meqtls) <- c("region", "meQTL SNP")
+percents_snps_anno_cvs_meqtls$region <- factor(percents_snps_anno_cvs_meqtls$region, levels = c("Promoter", "5' UTR", "Exon", "Intron", "3' UTR", "Downstream (<=300)", "Distal Intergenic"))
+
+percents_esnps_anno_cvs <- merge(percents_snps_anno_cvs_no_meqtls, percents_snps_anno_cvs_meqtls, by = "region")
+percents_esnps_anno_cvs <- reshape2::melt(percents_esnps_anno_cvs, id.vars = c("region"))
+```
+
+```{r}
+snps_chipseeker_barplot_meqtls_cvs <- 
+  barplot_snps_regions(data = percents_esnps_anno_cvs, group = variable, yvalues = value, xvalues = region, plottitle = "meQTLs CVS") 
+```
+
+
+
+### eQTM CpGs
+#### Placenta
+
+*Info for all CpGs which are NOT eqtms:*
+```{r}
+# this is just formatting for ChipSeeker
+anno_info_placenta_no_eqtms <- subset(annotation_placenta_meth, !(Name %in% bme_eqtm_placenta$ecpgs))
+anno_info_placenta_no_eqtms <- anno_info_placenta_no_eqtms[,c("chr", "pos", "Name")]
+```
+
+```{r}
+cpgs_to_map_placenta_no_eqtms <- makeGRangesFromDataFrame(anno_info_placenta_no_eqtms, start.field = "pos", end.field = "pos", seqnames = "chr", ignore.strand = T, keep.extra.columns = F)
+```
+
+```{r}
+cpgs_anno_placenta_no_eqtms <- annotatePeak(cpgs_to_map_placenta_no_eqtms, TxDb=TxDb.Hsapiens.UCSC.hg19.knownGene, annoDb="org.Hs.eg.db", tssRegion = c(-500, 500))
+```
+
+```{r}
+data_cpgs_anno_placenta_no_eqtms <- as.data.frame(as.GRanges(cpgs_anno_placenta_no_eqtms))
+```
+
+```{r}
+anno_placenta_no_eqtms <- data_cpgs_anno_placenta_no_eqtms$annotation
+anno_placenta_no_eqtms <- group_as_chipseeker(anno_placenta_no_eqtms)
+
+data_cpgs_anno_placenta_no_eqtms$annotation <- anno_placenta_no_eqtms
+```
+
+```{r}
+cpg_region_mapped_placenta_no_eqtms <- cpgs_anno_placenta_no_eqtms@detailGenomicAnnotation
+```
+
+*Info for cpgs which ARE eqtms*
+```{r}
+cpgs_to_map_placenta_eqtms <- unique(cpgs_genes_eqtms_placenta[,c("cpg", "cpg_chr", "cpg_pos")])
+rownames(cpgs_to_map_placenta_eqtms) <- cpgs_to_map_placenta_eqtms$cpg
+cpgs_to_map_placenta_eqtms <- unique(cpgs_to_map_placenta_eqtms)
+```
+
+```{r}
+cpgs_to_map_placenta_eqtms <- makeGRangesFromDataFrame(cpgs_to_map_placenta_eqtms, start.field = "cpg_pos", end.field = "cpg_pos", seqnames = "cpg_chr", ignore.strand = T, keep.extra.columns = F)
+```
+
+```{r}
+cpgs_anno_placenta_eqtms <- annotatePeak(cpgs_to_map_placenta_eqtms, TxDb=TxDb.Hsapiens.UCSC.hg19.knownGene, annoDb="org.Hs.eg.db", tssRegion = c(-500, 500))
+```
+
+```{r}
+data_cpgs_anno_placenta_eqtms <- as.data.frame(as.GRanges(cpgs_anno_placenta_eqtms))
+```
+
+```{r}
+anno_placenta_eqtms <- data_cpgs_anno_placenta_eqtms$annotation
+anno_placenta_eqtms <- group_as_chipseeker(anno_placenta_eqtms)
+
+data_cpgs_anno_placenta_eqtms$annotation <- anno_placenta_eqtms
+```
+
+```{r}
+cpg_region_mapped_eqtm_placenta <- cpgs_anno_placenta_eqtms@detailGenomicAnnotation
+```
+
+We want to take a look at associations with positive vs. negative sign:
+```{r}
+cpgs_genes_eqtms_placenta_anno_sign <- merge(cpgs_genes_eqtms_placenta[,c("cpg", "gene", "corrected_beta")], data_cpgs_anno_placenta_eqtms, by.x="cpg", by.y="row.names")
+cpgs_genes_eqtms_placenta_anno_sign_negative <- cpgs_genes_eqtms_placenta_anno_sign[cpgs_genes_eqtms_placenta_anno_sign$corrected_beta < 0, ]
+cpgs_genes_eqtms_placenta_anno_sign_positive <- cpgs_genes_eqtms_placenta_anno_sign[cpgs_genes_eqtms_placenta_anno_sign$corrected_beta > 0, ]
+```
+
+```{r}
+# negative
+prop.table(table(cpgs_genes_eqtms_placenta_anno_sign_negative$annotation))
+```
+```{r}
+# positive
+prop.table(table(cpgs_genes_eqtms_placenta_anno_sign_positive$annotation))
+```
+
+*Plot*
+prepare data
+
+We group 1st/Other Exon and Intron together
+```{r}
+# no eqtms
+data_cpgs_anno_placenta_no_eqtms_grouped <- data_cpgs_anno_placenta_no_eqtms$annotation
+data_cpgs_anno_placenta_no_eqtms_grouped <- group_exons_introns(data_cpgs_anno_placenta_no_eqtms_grouped)
+
+data_cpgs_anno_placenta_no_eqtms$anno_grouped <- data_cpgs_anno_placenta_no_eqtms_grouped
+```
+
+```{r}
+# eqtms
+data_cpgs_anno_placenta_eqtms_grouped <- data_cpgs_anno_placenta_eqtms$annotation
+data_cpgs_anno_placenta_eqtms_grouped <- group_exons_introns(data_cpgs_anno_placenta_eqtms_grouped)
+
+data_cpgs_anno_placenta_eqtms$anno_grouped <-data_cpgs_anno_placenta_eqtms_grouped
+```
+
+```{r}
+# eqtms by sign
+cpgs_genes_eqtms_placenta_anno_sign_positive_grouped <- cpgs_genes_eqtms_placenta_anno_sign_positive$annotation
+cpgs_genes_eqtms_placenta_anno_sign_positive_grouped <- group_exons_introns(cpgs_genes_eqtms_placenta_anno_sign_positive_grouped)
+
+cpgs_genes_eqtms_placenta_anno_sign_positive$anno_grouped <- cpgs_genes_eqtms_placenta_anno_sign_positive_grouped
+
+cpgs_genes_eqtms_placenta_anno_sign_negative_grouped <- cpgs_genes_eqtms_placenta_anno_sign_negative$annotation
+cpgs_genes_eqtms_placenta_anno_sign_negative_grouped <- group_exons_introns(cpgs_genes_eqtms_placenta_anno_sign_negative_grouped)
+
+cpgs_genes_eqtms_placenta_anno_sign_negative$anno_grouped <- cpgs_genes_eqtms_placenta_anno_sign_negative_grouped
+```
+
+We group Transcribed Regions together (Downstream vs Intergenic vs. Promoter vs Transcribed)
+```{r}
+# no eqtms
+data_cpgs_anno_placenta_no_eqtms_grouped_transcribed <- data_cpgs_anno_placenta_no_eqtms$anno_grouped
+data_cpgs_anno_placenta_no_eqtms_grouped_transcribed <- group_transcribed_regions(data_cpgs_anno_placenta_no_eqtms_grouped_transcribed)
+
+data_cpgs_anno_placenta_no_eqtms$anno_grouped_transcribed <- data_cpgs_anno_placenta_no_eqtms_grouped_transcribed
+```
+
+```{r}
+# eqtms
+data_cpgs_anno_placenta_eqtms_grouped_transcribed <- data_cpgs_anno_placenta_eqtms$anno_grouped
+data_cpgs_anno_placenta_eqtms_grouped_transcribed <- group_transcribed_regions(data_cpgs_anno_placenta_eqtms_grouped_transcribed)
+
+data_cpgs_anno_placenta_eqtms$anno_grouped_transcribed <- data_cpgs_anno_placenta_eqtms_grouped_transcribed
+```
+
+```{r}
+# eqtms by sign
+cpgs_genes_eqtms_placenta_anno_sign_positive_grouped_transcribed <- cpgs_genes_eqtms_placenta_anno_sign_positive$anno_grouped
+cpgs_genes_eqtms_placenta_anno_sign_positive_grouped_transcribed <- group_transcribed_regions(cpgs_genes_eqtms_placenta_anno_sign_positive_grouped_transcribed)
+
+cpgs_genes_eqtms_placenta_anno_sign_positive$anno_grouped_transcribed <- cpgs_genes_eqtms_placenta_anno_sign_positive_grouped_transcribed
+
+cpgs_genes_eqtms_placenta_anno_sign_negative_grouped_transcribed <- cpgs_genes_eqtms_placenta_anno_sign_negative$anno_grouped
+cpgs_genes_eqtms_placenta_anno_sign_negative_grouped_transcribed <- group_transcribed_regions(cpgs_genes_eqtms_placenta_anno_sign_negative_grouped_transcribed)
+
+cpgs_genes_eqtms_placenta_anno_sign_negative$anno_grouped_transcribed <- cpgs_genes_eqtms_placenta_anno_sign_negative_grouped_transcribed
+```
+
+We group Gene body together (Downstream vs Intergenic vs. Promoter vs Gene Body vs. UTR)
+```{r}
+# eqtms by sign
+cpgs_genes_eqtms_placenta_anno_sign_positive_grouped_body <- cpgs_genes_eqtms_placenta_anno_sign_positive$anno_grouped
+cpgs_genes_eqtms_placenta_anno_sign_positive_grouped_body <- group_body(cpgs_genes_eqtms_placenta_anno_sign_positive_grouped_body)
+
+cpgs_genes_eqtms_placenta_anno_sign_positive$anno_grouped_body <- cpgs_genes_eqtms_placenta_anno_sign_positive_grouped_body
+
+cpgs_genes_eqtms_placenta_anno_sign_negative_grouped_body <- cpgs_genes_eqtms_placenta_anno_sign_negative$anno_grouped
+cpgs_genes_eqtms_placenta_anno_sign_negative_grouped_body <- group_body(cpgs_genes_eqtms_placenta_anno_sign_negative_grouped_body)
+
+cpgs_genes_eqtms_placenta_anno_sign_negative$anno_grouped_body <- cpgs_genes_eqtms_placenta_anno_sign_negative_grouped_body
+```
+
+
+%
+```{r}
+percents_cpgs_anno_placenta_no_eqtms <- data.frame(prop.table(table(data_cpgs_anno_placenta_no_eqtms$anno_grouped)))
+names(percents_cpgs_anno_placenta_no_eqtms) <- c("region", "no eQTM CpG")
+percents_cpgs_anno_placenta_no_eqtms$region <- factor(percents_cpgs_anno_placenta_no_eqtms$region, levels = c("Promoter", "5' UTR", "Exon", "Intron", "3' UTR", "Downstream (<=300)", "Distal Intergenic"))
+
+percents_cpgs_anno_placenta_eqtms <- data.frame(prop.table(table(data_cpgs_anno_placenta_eqtms$anno_grouped)))
+names(percents_cpgs_anno_placenta_eqtms) <- c("region", "eQTM CpG")
+percents_cpgs_anno_placenta_eqtms$region <- factor(percents_cpgs_anno_placenta_eqtms$region, levels = c("Promoter", "5' UTR", "Exon", "Intron", "3' UTR", "Downstream (<=300)", "Distal Intergenic"))
+
+percents_ecpgs_anno_placenta <- merge(percents_cpgs_anno_placenta_no_eqtms, percents_cpgs_anno_placenta_eqtms, by = "region")
+percents_ecpgs_anno_placenta <- reshape2::melt(percents_ecpgs_anno_placenta, id.vars = c("region"))
+```
+
+```{r}
+cpgs_chipseeker_barplot_eqtms_placenta <- 
+  barplot_snps_regions(data = percents_ecpgs_anno_placenta, group = variable, yvalues = value, xvalues = region, plottitle = "eQTMs Placenta") 
+```
+
+  & for positive vs. negative:
+```{r}
+percents_cpgs_anno_placenta_negative_eqtms <- data.frame(prop.table(table(cpgs_genes_eqtms_placenta_anno_sign_negative$anno_grouped)))
+names(percents_cpgs_anno_placenta_negative_eqtms) <- c("region", "negative")
+percents_cpgs_anno_placenta_negative_eqtms$region <- factor(percents_cpgs_anno_placenta_negative_eqtms$region, levels = c("Promoter", "5' UTR", "Exon", "Intron", "3' UTR", "Downstream (<=300)", "Distal Intergenic"))
+
+percents_cpgs_anno_placenta_positive_eqtms <- data.frame(prop.table(table(cpgs_genes_eqtms_placenta_anno_sign_positive$anno_grouped)))
+names(percents_cpgs_anno_placenta_positive_eqtms) <- c("region", "positive")
+percents_cpgs_anno_placenta_positive_eqtms$region <- factor(percents_cpgs_anno_placenta_positive_eqtms$region, levels = c("Promoter", "5' UTR", "Exon", "Intron", "3' UTR", "Downstream (<=300)", "Distal Intergenic"))
+
+percents_ecpgs_anno_placenta_sign <- merge(percents_cpgs_anno_placenta_negative_eqtms, percents_cpgs_anno_placenta_positive_eqtms, by = "region")
+percents_ecpgs_anno_placenta_sign <- reshape2::melt(percents_ecpgs_anno_placenta_sign, id.vars = c("region"))
+```
+
+```{r}
+cpgs_chipseeker_barplot_eqtms_placenta_signed_body <-ggplot(percents_ecpgs_anno_placenta_sign, aes(fill=variable, y=value, x=region)) + 
+    geom_rect(fill = "lavender",xmin = 2.5,xmax = 4.5, ymin = -Inf,ymax = Inf, alpha = 0.02, color = "grey") +
+    geom_rect(fill = "lavenderblush",xmin = 0,xmax = 1.5, ymin = -Inf,ymax = Inf, alpha = 0.02, color = "grey") +
+    geom_bar(position="dodge", stat="identity") + 
+    scale_fill_grey(start=0.8, end=0.4) +
+    scale_y_continuous(breaks=seq(0,1, by = 0.1), labels = scales::percent_format(accuracy = 1)) +
+    theme_classic() +
+    theme(
+      plot.title = element_text(size = standard_textsize), 
+      axis.title = element_text(size = standard_textsize), 
+      axis.text.x = element_text(angle = 45, hjust=1, size = standard_textsize), 
+      axis.text.y = element_text(), legend.title=element_blank()) + 
+    labs(x = "", y="", title = "eQTMs Placenta")
+```
+
+*Enrichment for Regions*
+are our eqtm cpgs enriched for Promoter region of genes?
+```{r}
+enrichment_permed(data_cpgs_anno_placenta_eqtms$anno_grouped_transcribed, data_cpgs_anno_placenta_no_eqtms$anno_grouped_transcribed, "Promoter", 100)
+```
+
+are our eqtm cpgs enriched for transcribed region?
+```{r}
+enrichment_permed(data_cpgs_anno_placenta_eqtms$anno_grouped_transcribed, data_cpgs_anno_placenta_no_eqtms$anno_grouped_transcribed, "Transcribed", 100)
+```
+
+
+are our negative (vs. positive) eqtm cpgs enriched for Promoter region of genes?
+```{r}
+enrichment_basic(cpgs_genes_eqtms_placenta_anno_sign_negative$anno_grouped_body, cpgs_genes_eqtms_placenta_anno_sign_positive$anno_grouped_body, "Promoter")
+```
+
+are our positive (vs. negative) eqtm cpgs enriched for Gene Body region of genes?
+```{r}
+enrichment_basic(cpgs_genes_eqtms_placenta_anno_sign_positive$anno_grouped_body, cpgs_genes_eqtms_placenta_anno_sign_negative$anno_grouped_body, "Gene Body")
+```
+
+```{r}
+length(unique(cpgs_genes_eqtms_placenta_anno_sign$cpg))
+length(unique(cpgs_genes_eqtms_placenta_anno_sign_negative$cpg))
+length(unique(cpgs_genes_eqtms_placenta_anno_sign_positive$cpg))
+```
+
+#### cvs
+
+*Info for all CpGs which are NOT eqtms:*
+```{r}
+# this is just formatting for ChipSeeker
+anno_info_cvs_no_eqtms <- subset(annotation_cvs_meth, !(Name %in% bme_eqtm_cvs$ecpgs))
+anno_info_cvs_no_eqtms <- anno_info_cvs_no_eqtms[,c("chr", "pos", "Name")]
+```
+
+```{r}
+cpgs_to_map_cvs_no_eqtms <- makeGRangesFromDataFrame(anno_info_cvs_no_eqtms, start.field = "pos", end.field = "pos", seqnames = "chr", ignore.strand = T, keep.extra.columns = F)
+```
+
+```{r}
+cpgs_anno_cvs_no_eqtms <- annotatePeak(cpgs_to_map_cvs_no_eqtms, TxDb=TxDb.Hsapiens.UCSC.hg19.knownGene, annoDb="org.Hs.eg.db", tssRegion = c(-500, 500))
+```
+
+```{r}
+data_cpgs_anno_cvs_no_eqtms <- as.data.frame(as.GRanges(cpgs_anno_cvs_no_eqtms))
+```
+
+```{r}
+anno_cvs_no_eqtms <- data_cpgs_anno_cvs_no_eqtms$annotation
+anno_cvs_no_eqtms <- group_as_chipseeker(anno_cvs_no_eqtms)
+
+data_cpgs_anno_cvs_no_eqtms$annotation <- anno_cvs_no_eqtms
+```
+
+```{r}
+cpg_region_mapped_cvs_no_eqtms <- cpgs_anno_cvs_no_eqtms@detailGenomicAnnotation
+```
+
+*Info for cpgs which ARE eqtms*
+```{r}
+cpgs_to_map_cvs_eqtms <- unique(cpgs_genes_eqtms_cvs[,c("cpg", "cpg_chr", "cpg_pos")])
+rownames(cpgs_to_map_cvs_eqtms) <- cpgs_to_map_cvs_eqtms$cpg
+cpgs_to_map_cvs_eqtms <- unique(cpgs_to_map_cvs_eqtms)
+```
+
+```{r}
+cpgs_to_map_cvs_eqtms <- makeGRangesFromDataFrame(cpgs_to_map_cvs_eqtms, start.field = "cpg_pos", end.field = "cpg_pos", seqnames = "cpg_chr", ignore.strand = T, keep.extra.columns = F)
+```
+
+```{r}
+cpgs_anno_cvs_eqtms <- annotatePeak(cpgs_to_map_cvs_eqtms, TxDb=TxDb.Hsapiens.UCSC.hg19.knownGene, annoDb="org.Hs.eg.db", tssRegion = c(-500, 500))
+```
+
+```{r}
+data_cpgs_anno_cvs_eqtms <- as.data.frame(as.GRanges(cpgs_anno_cvs_eqtms))
+```
+
+```{r}
+anno_cvs_eqtms <- data_cpgs_anno_cvs_eqtms$annotation
+anno_cvs_eqtms <- group_as_chipseeker(anno_cvs_eqtms)
+
+data_cpgs_anno_cvs_eqtms$annotation <- anno_cvs_eqtms
+```
+
+```{r}
+cpg_region_mapped_eqtm_cvs <- cpgs_anno_cvs_eqtms@detailGenomicAnnotation
+```
+
+We want to take a look at associations with positive vs. negative sign:
+```{r}
+cpgs_genes_eqtms_cvs_anno_sign <- merge(cpgs_genes_eqtms_cvs[,c("cpg", "gene", "corrected_beta")], data_cpgs_anno_cvs_eqtms, by.x="cpg", by.y="row.names")
+cpgs_genes_eqtms_cvs_anno_sign_negative <- cpgs_genes_eqtms_cvs_anno_sign[cpgs_genes_eqtms_cvs_anno_sign$corrected_beta < 0, ]
+cpgs_genes_eqtms_cvs_anno_sign_positive <- cpgs_genes_eqtms_cvs_anno_sign[cpgs_genes_eqtms_cvs_anno_sign$corrected_beta > 0, ]
+```
+
+```{r}
+# negative
+prop.table(table(cpgs_genes_eqtms_cvs_anno_sign_negative$annotation))
+```
+```{r}
+# positive
+prop.table(table(cpgs_genes_eqtms_cvs_anno_sign_positive$annotation))
+```
+
+*Plot*
+prepare data
+
+We group 1st/Other Exon and Intron together
+```{r}
+data_cpgs_anno_cvs_no_eqtms_grouped <- data_cpgs_anno_cvs_no_eqtms$annotation
+data_cpgs_anno_cvs_no_eqtms_grouped <- group_exons_introns(data_cpgs_anno_cvs_no_eqtms_grouped)
+
+data_cpgs_anno_cvs_no_eqtms$anno_grouped <- data_cpgs_anno_cvs_no_eqtms_grouped
+```
+```{r}
+data_cpgs_anno_cvs_eqtms_grouped <- data_cpgs_anno_cvs_eqtms$annotation
+data_cpgs_anno_cvs_eqtms_grouped <- group_exons_introns(data_cpgs_anno_cvs_eqtms_grouped)
+
+data_cpgs_anno_cvs_eqtms$anno_grouped <-data_cpgs_anno_cvs_eqtms_grouped
+```
+
+```{r}
+# eqtms by sign
+cpgs_genes_eqtms_cvs_anno_sign_positive_grouped <- cpgs_genes_eqtms_cvs_anno_sign_positive$annotation
+cpgs_genes_eqtms_cvs_anno_sign_positive_grouped <- group_exons_introns(cpgs_genes_eqtms_cvs_anno_sign_positive_grouped)
+
+cpgs_genes_eqtms_cvs_anno_sign_positive$anno_grouped <- cpgs_genes_eqtms_cvs_anno_sign_positive_grouped
+
+cpgs_genes_eqtms_cvs_anno_sign_negative_grouped <- cpgs_genes_eqtms_cvs_anno_sign_negative$annotation
+cpgs_genes_eqtms_cvs_anno_sign_negative_grouped <- group_exons_introns(cpgs_genes_eqtms_cvs_anno_sign_negative_grouped)
+
+cpgs_genes_eqtms_cvs_anno_sign_negative$anno_grouped <- cpgs_genes_eqtms_cvs_anno_sign_negative_grouped
+```
+
+We group Transcribed Regions together (Downstream vs Intergenic vs. Promoter vs Transcribed)
+```{r}
+data_cpgs_anno_cvs_no_eqtms_grouped_transcribed <- data_cpgs_anno_cvs_no_eqtms$anno_grouped
+data_cpgs_anno_cvs_no_eqtms_grouped_transcribed <- group_transcribed_regions(data_cpgs_anno_cvs_no_eqtms_grouped_transcribed)
+
+data_cpgs_anno_cvs_no_eqtms$anno_grouped_transcribed <- data_cpgs_anno_cvs_no_eqtms_grouped_transcribed
+```
+
+```{r}
+data_cpgs_anno_cvs_eqtms_grouped_transcribed <- data_cpgs_anno_cvs_eqtms$anno_grouped
+data_cpgs_anno_cvs_eqtms_grouped_transcribed <- group_transcribed_regions(data_cpgs_anno_cvs_eqtms_grouped_transcribed)
+
+data_cpgs_anno_cvs_eqtms$anno_grouped_transcribed <- data_cpgs_anno_cvs_eqtms_grouped_transcribed
+```
+
+```{r}
+# eqtms by sign
+cpgs_genes_eqtms_cvs_anno_sign_positive_grouped_transcribed <- cpgs_genes_eqtms_cvs_anno_sign_positive$anno_grouped
+cpgs_genes_eqtms_cvs_anno_sign_positive_grouped_transcribed <- group_transcribed_regions(cpgs_genes_eqtms_cvs_anno_sign_positive_grouped_transcribed)
+
+cpgs_genes_eqtms_cvs_anno_sign_positive$anno_grouped_transcribed <- cpgs_genes_eqtms_cvs_anno_sign_positive_grouped_transcribed
+
+cpgs_genes_eqtms_cvs_anno_sign_negative_grouped_transcribed <- cpgs_genes_eqtms_cvs_anno_sign_negative$anno_grouped
+cpgs_genes_eqtms_cvs_anno_sign_negative_grouped_transcribed <- group_transcribed_regions(cpgs_genes_eqtms_cvs_anno_sign_negative_grouped_transcribed)
+
+cpgs_genes_eqtms_cvs_anno_sign_negative$anno_grouped_transcribed <- cpgs_genes_eqtms_cvs_anno_sign_negative_grouped_transcribed
+```
+
+We group Gene body together (Downstream vs Intergenic vs. Promoter vs Gene Body vs. UTR)
+```{r}
+# eqtms by sign
+cpgs_genes_eqtms_cvs_anno_sign_positive_grouped_body <- cpgs_genes_eqtms_cvs_anno_sign_positive$anno_grouped
+cpgs_genes_eqtms_cvs_anno_sign_positive_grouped_body <- group_body(cpgs_genes_eqtms_cvs_anno_sign_positive_grouped_body)
+
+cpgs_genes_eqtms_cvs_anno_sign_positive$anno_grouped_body <- cpgs_genes_eqtms_cvs_anno_sign_positive_grouped_body
+
+cpgs_genes_eqtms_cvs_anno_sign_negative_grouped_body <- cpgs_genes_eqtms_cvs_anno_sign_negative$anno_grouped
+cpgs_genes_eqtms_cvs_anno_sign_negative_grouped_body <- group_body(cpgs_genes_eqtms_cvs_anno_sign_negative_grouped_body)
+
+cpgs_genes_eqtms_cvs_anno_sign_negative$anno_grouped_body <- cpgs_genes_eqtms_cvs_anno_sign_negative_grouped_body
+```
+
+%
+```{r}
+percents_cpgs_anno_cvs_no_eqtms <- data.frame(prop.table(table(data_cpgs_anno_cvs_no_eqtms$anno_grouped)))
+names(percents_cpgs_anno_cvs_no_eqtms) <- c("region", "no eQTM CpG")
+percents_cpgs_anno_cvs_no_eqtms$region <- factor(percents_cpgs_anno_cvs_no_eqtms$region, levels = c("Promoter", "5' UTR", "Exon", "Intron", "3' UTR", "Downstream (<=300)", "Distal Intergenic"))
+
+percents_cpgs_anno_cvs_eqtms <- data.frame(prop.table(table(data_cpgs_anno_cvs_eqtms$anno_grouped)))
+names(percents_cpgs_anno_cvs_eqtms) <- c("region", "eQTM CpG")
+percents_cpgs_anno_cvs_eqtms$region <- factor(percents_cpgs_anno_cvs_eqtms$region, levels = c("Promoter", "5' UTR", "Exon", "Intron", "3' UTR", "Downstream (<=300)", "Distal Intergenic"))
+
+percents_ecpgs_anno_cvs <- merge(percents_cpgs_anno_cvs_no_eqtms, percents_cpgs_anno_cvs_eqtms, by = "region", all = T)
+percents_ecpgs_anno_cvs <- reshape2::melt(percents_ecpgs_anno_cvs, id.vars = c("region"))
+```
+
+  & for positive vs. negative:
+```{r}
+percents_cpgs_anno_cvs_negative_eqtms <- data.frame(prop.table(table(factor(cpgs_genes_eqtms_cvs_anno_sign_negative$anno_grouped, levels = c("Promoter", "5' UTR", "Exon", "Intron", "3' UTR", "Downstream (<=300)", "Distal Intergenic")))))
+names(percents_cpgs_anno_cvs_negative_eqtms) <- c("region", "negative")
+percents_cpgs_anno_cvs_negative_eqtms$region <- factor(percents_cpgs_anno_cvs_negative_eqtms$region, levels = c("Promoter", "5' UTR", "Exon", "Intron", "3' UTR", "Downstream (<=300)", "Distal Intergenic"))
+
+percents_cpgs_anno_cvs_positive_eqtms <- data.frame(prop.table(table(factor(cpgs_genes_eqtms_cvs_anno_sign_positive$anno_grouped, levels = c("Promoter", "5' UTR", "Exon", "Intron", "3' UTR", "Downstream (<=300)", "Distal Intergenic")))))
+names(percents_cpgs_anno_cvs_positive_eqtms) <- c("region", "positive")
+percents_cpgs_anno_cvs_positive_eqtms$region <- factor(percents_cpgs_anno_cvs_positive_eqtms$region, levels = c("Promoter", "5' UTR", "Exon", "Intron", "3' UTR", "Downstream (<=300)", "Distal Intergenic"))
+
+percents_ecpgs_anno_cvs_sign <- merge(percents_cpgs_anno_cvs_negative_eqtms, percents_cpgs_anno_cvs_positive_eqtms, by = "region")
+percents_ecpgs_anno_cvs_sign <- reshape2::melt(percents_ecpgs_anno_cvs_sign, id.vars = c("region"))
+```
+
+```{r}
+cpgs_chipseeker_barplot_eqtms_cvs <- 
+  barplot_snps_regions(data = percents_ecpgs_anno_cvs, group = variable, yvalues = value, xvalues = region, plottitle = "eQTMs CVS") 
+```
+
+```{r}
+cpgs_chipseeker_barplot_eqtms_cvs_signed_body <- 
+  ggplot(percents_ecpgs_anno_cvs_sign, aes(fill=variable, y=value, x=region)) + 
+    geom_rect(fill = "lavender",xmin = 2.5,xmax = 4.5, ymin = -Inf,ymax = Inf, alpha = 0.02, color = "grey") +
+    geom_rect(fill = "lavenderblush",xmin = 0,xmax = 1.5, ymin = -Inf,ymax = Inf, alpha = 0.02, color = "grey") +
+    geom_bar(position="dodge", stat="identity") + 
+    scale_fill_grey(start=0.8, end=0.4) +
+    scale_y_continuous(breaks=seq(0,1, by = 0.1), labels = scales::percent_format(accuracy = 1)) +
+    theme_classic() +
+    theme(
+      plot.title = element_text(size = standard_textsize), 
+      axis.title = element_text(size = standard_textsize), 
+      axis.text.x = element_text(angle = 45, hjust=1, size = standard_textsize), 
+      axis.text.y = element_text(), legend.title=element_blank()) + 
+    labs(x = "", y="", title = "eQTMs CVS")
+```
+
+
+are our negative (vs. positive) eqtm cpgs enriched for Promoter region of genes?
+```{r}
+enrichment_basic(cpgs_genes_eqtms_cvs_anno_sign_negative$anno_grouped_body, cpgs_genes_eqtms_cvs_anno_sign_positive$anno_grouped_body, "Promoter")
+```
+
+are our positive (vs. negative) eqtm cpgs enriched for Gene Body region of genes?
+```{r}
+enrichment_basic(cpgs_genes_eqtms_cvs_anno_sign_positive$anno_grouped_body, cpgs_genes_eqtms_cvs_anno_sign_negative$anno_grouped_body, "Gene Body")
+```
+
+```{r}
+length(unique(cpgs_genes_eqtms_cvs_anno_sign$cpg))
+length(unique(cpgs_genes_eqtms_cvs_anno_sign_negative$cpg))
+length(unique(cpgs_genes_eqtms_cvs_anno_sign_positive$cpg))
+```
+
+We have 36 CpGs, 27 have a negative sign and 9 a positive sign
+
+
+### Plot
+```{r}
+snps_chipseeker_barplot_eqtls_placenta
+snps_chipseeker_barplot_eqtls_cvs
+snps_chipseeker_barplot_meqtls_placenta
+snps_chipseeker_barplot_meqtls_cvs
+cpgs_chipseeker_barplot_eqtms_placenta
+cpgs_chipseeker_barplot_eqtms_cvs
+```
+
+```{r}
+eqtl_meqtl_eqtm_chipseeker_plot <- plot_grid(snps_chipseeker_barplot_eqtls_placenta, snps_chipseeker_barplot_eqtls_cvs, snps_chipseeker_barplot_meqtls_placenta, snps_chipseeker_barplot_meqtls_cvs, cpgs_chipseeker_barplot_eqtms_placenta, cpgs_chipseeker_barplot_eqtms_cvs, ncol=2, align = "v", labels=c('a', 'b', 'c', 'd', 'e', 'f'))
+```
+
+```{r}
+ggsave(here("Analyses/Results/AnnotationInfos/", "eQTLs_meQTLs_eQTMs_chipseeker_plot.pdf"),
+eqtl_meqtl_eqtm_chipseeker_plot, width=standard_width_mm_single, height=standard_height_mm/2, units="mm", dpi=600, scale=2, device = cairo_pdf)
+```
+
+```{r}
+eqtm_chipseeker_plot_signed <- plot_grid(cpgs_chipseeker_barplot_eqtms_placenta_signed_body, cpgs_chipseeker_barplot_eqtms_cvs_signed_body, ncol=2, align = "v", labels=c('a', 'b'))
+```
+
+```{r}
+ggsave(here("Analyses/Results/AnnotationInfos/", "eQTMs_chipseeker_plot_sign.pdf"),
+eqtm_chipseeker_plot_signed, width=standard_width_mm_single, height=standard_height_mm/5, units="mm", dpi=600, scale=2, device = cairo_pdf)
+```
+
+################################################################################
+
+## CpG locations
+
+N.Shore: 2kb upstream of island
+N.Shelf: 2-4 kb upstream of island
+S.Shore: 2kb downstream of island
+S.Shelf: 2-4 kb downstream of island
+
+```{r}
+cpgs_all_placenta <- annotation_placenta_meth[,c("chr", "pos", "Name", "Relation_to_Island")]
+cpgs_all_cvs <- annotation_cvs_meth[,c("chr", "pos", "Name", "Relation_to_Island")]
+```
+```{r}
+prop.table(table(cpgs_all_placenta$Relation_to_Island))*100
+prop.table(table(cpgs_all_cvs$Relation_to_Island))*100
+```
+
+### meQTLs
+
+#### Placenta
+
+*for CpGs among meQTLs*
+```{r}
+snps_cpgs_meqtls_placenta <- bme_meqtl_placenta_clumped[ ,c("eSNPs", "eGene")]
+```
+
+get position information
+```{r}
+snps_cpgs_meqtls_placenta <- merge(snps_cpgs_meqtls_placenta, annotation_placenta_meth[,c("chr", "pos", "Name", "Relation_to_Island")], by.x="eGene", by.y="Name")
+snps_cpgs_meqtls_placenta <- merge(snps_cpgs_meqtls_placenta, geno_info[,-3], by.x="eSNPs", by.y="snp.name")
+
+names(snps_cpgs_meqtls_placenta) <- c("snp", "cpg", "cpg_chr", "cpg_pos", "cpg_relation_island", "snp_chr", "snp_pos", "snp_alt_allele", "snp_eff_allele")
+```
+
+```{r}
+cpgs_to_map_meqtl_placenta <- snps_cpgs_meqtls_placenta[,c("cpg", "cpg_relation_island", "cpg_pos", "cpg_chr")]
+cpgs_to_map_meqtl_placenta <- unique(cpgs_to_map_meqtl_placenta)
+```
+
+```{r}
+prop.table(table(cpgs_to_map_meqtl_placenta$cpg_relation_island))*100
+```
+
+*for CpGs not among meQTLs*
+```{r}
+cpgs_placenta_no_meqtls <- subset(cpgs_all_placenta, !(Name %in% bme_meqtl_placenta_clumped$eGene))
+names(cpgs_placenta_no_meqtls) <- c("cpg_chr", "cpg_pos", "cpg", "cpg_relation_to_island")
+```
+
+```{r}
+prop.table(table(cpgs_placenta_no_meqtls$cpg_relation_to_island))*100
+```
+
+**Plot**
+%
+```{r}
+percents_cpgs_anno_placenta_no_meqtls <- data.frame(prop.table(table(cpgs_placenta_no_meqtls$cpg_relation_to_island)))
+names(percents_cpgs_anno_placenta_no_meqtls) <- c("region", "no meQTL CpG")
+percents_cpgs_anno_placenta_no_meqtls$region <- factor(percents_cpgs_anno_placenta_no_meqtls$region, levels = c("N_Shelf", "N_Shore", "Island", "S_Shore", "S_Shelf", "OpenSea"))
+
+percents_cpgs_anno_placenta_meqtls <- data.frame(prop.table(table(cpgs_to_map_meqtl_placenta$cpg_relation_island)))
+names(percents_cpgs_anno_placenta_meqtls) <- c("region", "meQTL CpG")
+percents_cpgs_anno_placenta_meqtls$region <- factor(percents_cpgs_anno_placenta_meqtls$region, levels = c("N_Shelf", "N_Shore", "Island", "S_Shore", "S_Shelf", "OpenSea"))
+
+percents_mcpgs_anno_placenta <- merge(percents_cpgs_anno_placenta_no_meqtls, percents_cpgs_anno_placenta_meqtls, by = "region")
+percents_mcpgs_anno_placenta <- reshape2::melt(percents_mcpgs_anno_placenta, id.vars = c("region"))
+```
+
+```{r}
+barplot_cpgs_annotation_meqtls_placenta <- 
+  barplot_cpgs_regions(data = percents_mcpgs_anno_placenta, group = variable, yvalues = value, xvalues = region, plottitle = "meQTLs Placenta") 
+```
+
+*Enrichment for Regions*
+are our meqtl CpGs enriched for OpenSea region?
+```{r}
+enrichment_permed(cpgs_to_map_meqtl_placenta$cpg_relation_island, cpgs_placenta_no_meqtls$cpg_relation_to_island, "OpenSea", 100)
+```
+
+#### CVS
+
+*for CpGs among meQTLs*
+```{r}
+snps_cpgs_meqtls_cvs <- bme_meqtl_cvs_clumped[ ,c("eSNPs", "eGene")]
+```
+
+get position information
+```{r}
+snps_cpgs_meqtls_cvs <- merge(snps_cpgs_meqtls_cvs, annotation_cvs_meth[,c("chr", "pos", "Name", "Relation_to_Island")], by.x="eGene", by.y="Name")
+snps_cpgs_meqtls_cvs <- merge(snps_cpgs_meqtls_cvs, geno_info[,-3], by.x="eSNPs", by.y="snp.name")
+
+names(snps_cpgs_meqtls_cvs) <- c("snp", "cpg", "cpg_chr", "cpg_pos", "cpg_relation_island", "snp_chr", "snp_pos", "snp_alt_allele", "snp_eff_allele")
+```
+
+```{r}
+cpgs_to_map_meqtl_cvs <- snps_cpgs_meqtls_cvs[,c("cpg", "cpg_relation_island", "cpg_pos", "cpg_chr")]
+cpgs_to_map_meqtl_cvs <- unique(cpgs_to_map_meqtl_cvs)
+```
+
+```{r}
+prop.table(table(cpgs_to_map_meqtl_cvs$cpg_relation_island))*100
+```
+
+*for CpGs not among meQTLs*
+```{r}
+cpgs_cvs_no_meqtls <- subset(cpgs_all_cvs, !(Name %in% bme_meqtl_cvs_clumped$eGene))
+names(cpgs_cvs_no_meqtls) <- c("cpg_chr", "cpg_pos", "cpg", "cpg_relation_to_island")
+```
+
+```{r}
+prop.table(table(cpgs_cvs_no_meqtls$cpg_relation_to_island))*100
+```
+
+**Plot**
+%
+```{r}
+percents_cpgs_anno_cvs_no_meqtls <- data.frame(prop.table(table(cpgs_cvs_no_meqtls$cpg_relation_to_island)))
+names(percents_cpgs_anno_cvs_no_meqtls) <- c("region", "no meQTL CpG")
+percents_cpgs_anno_cvs_no_meqtls$region <- factor(percents_cpgs_anno_cvs_no_meqtls$region, levels = c("N_Shelf", "N_Shore", "Island", "S_Shore", "S_Shelf", "OpenSea"))
+
+percents_cpgs_anno_cvs_meqtls <- data.frame(prop.table(table(cpgs_to_map_meqtl_cvs$cpg_relation_island)))
+names(percents_cpgs_anno_cvs_meqtls) <- c("region", "meQTL CpG")
+percents_cpgs_anno_cvs_meqtls$region <- factor(percents_cpgs_anno_cvs_meqtls$region, levels = c("N_Shelf", "N_Shore", "Island", "S_Shore", "S_Shelf", "OpenSea"))
+
+percents_mcpgs_anno_cvs <- merge(percents_cpgs_anno_cvs_no_meqtls, percents_cpgs_anno_cvs_meqtls, by = "region")
+percents_mcpgs_anno_cvs <- reshape2::melt(percents_mcpgs_anno_cvs, id.vars = c("region"))
+```
+
+```{r}
+barplot_cpgs_annotation_meqtls_cvs <- 
+  barplot_cpgs_regions(data = percents_mcpgs_anno_cvs, group = variable, yvalues = value, xvalues = region, plottitle = "meQTLs CVS") 
+```
+
+*Enrichment for Regions*
+are our meqtl CpGs enriched for OpenSea region?
+```{r}
+enrichment_permed(cpgs_to_map_meqtl_cvs$cpg_relation_island, cpgs_cvs_no_meqtls$cpg_relation_to_island, "OpenSea", 100)
+```
+
+### eQTMs
+
+#### Placenta
+
+*for CpGs among eqtms*
+```{r}
+cpgs_genes_eqtms_placenta <- bme_eqtm_placenta[ ,c("eSNPs", "eGene")]
+```
+
+get position information
+```{r}
+cpgs_genes_eqtms_placenta <- merge(cpgs_genes_eqtms_placenta, annotation_placenta_meth[,c("chr", "pos", "Name", "Relation_to_Island")], by.x="eSNPs", by.y="Name")
+cpgs_genes_eqtms_placenta <- merge(cpgs_genes_eqtms_placenta, annotation_genes_placenta_rna, by.x="eGene", by.y="ensembl_gene_id")
+
+names(cpgs_genes_eqtms_placenta) <- c("cpg", "gene", "cpg_chr", "cpg_pos", "cpg_relation_island", "gene_chr", "gene_start_pos", "gene_stop_pos", "hgnc_symbol")
+```
+
+```{r}
+cpgs_to_map_eqtm_placenta <- cpgs_genes_eqtms_placenta[,c("cpg", "cpg_relation_island", "cpg_pos", "cpg_chr")]
+cpgs_to_map_eqtm_placenta <- unique(cpgs_genes_eqtms_placenta)
+```
+
+```{r}
+prop.table(table(cpgs_to_map_eqtm_placenta$cpg_relation_island))*100
+```
+
+*for CpGs not among eqtms*
+```{r}
+cpgs_placenta_no_eqtms <- subset(cpgs_all_placenta, !(Name %in% bme_eqtm_placenta$eSNPs))
+names(cpgs_placenta_no_eqtms) <- c("cpg_chr", "cpg_pos", "cpg", "cpg_relation_to_island")
+```
+
+```{r}
+prop.table(table(cpgs_placenta_no_eqtms$cpg_relation_to_island))*100
+```
+
+**Plot**
+%
+```{r}
+percents_cpgs_anno_placenta_no_eqtms <- data.frame(prop.table(table(cpgs_placenta_no_eqtms$cpg_relation_to_island)))
+names(percents_cpgs_anno_placenta_no_eqtms) <- c("region", "no eQTM CpG")
+percents_cpgs_anno_placenta_no_eqtms$region <- factor(percents_cpgs_anno_placenta_no_eqtms$region, levels = c("N_Shelf", "N_Shore", "Island", "S_Shore", "S_Shelf", "OpenSea"))
+
+percents_cpgs_anno_placenta_eqtms <- data.frame(prop.table(table(cpgs_to_map_eqtm_placenta$cpg_relation_island)))
+names(percents_cpgs_anno_placenta_eqtms) <- c("region", "eQTM CpG")
+percents_cpgs_anno_placenta_eqtms$region <- factor(percents_cpgs_anno_placenta_eqtms$region, levels = c("N_Shelf", "N_Shore", "Island", "S_Shore", "S_Shelf", "OpenSea"))
+
+percents_eqtms_anno_placenta <- merge(percents_cpgs_anno_placenta_no_eqtms, percents_cpgs_anno_placenta_eqtms, by = "region")
+percents_eqtms_anno_placenta <- reshape2::melt(percents_eqtms_anno_placenta, id.vars = c("region"))
+```
+
+```{r}
+barplot_cpgs_annotation_eqtms_placenta <- 
+  barplot_cpgs_regions(data = percents_eqtms_anno_placenta, group = variable, yvalues = value, xvalues = region, plottitle = "eQTMs Placenta") 
+```
+
+#### cvs
+
+*for CpGs among eqtms*
+```{r}
+cpgs_genes_eqtms_cvs <- bme_eqtm_cvs[ ,c("eSNPs", "eGene")]
+```
+
+get position information
+```{r}
+cpgs_genes_eqtms_cvs <- merge(cpgs_genes_eqtms_cvs, annotation_cvs_meth[,c("chr", "pos", "Name", "Relation_to_Island")], by.x="eSNPs", by.y="Name")
+cpgs_genes_eqtms_cvs <- merge(cpgs_genes_eqtms_cvs, annotation_genes_cvs_rna, by.x="eGene", by.y="ensembl_gene_id")
+
+names(cpgs_genes_eqtms_cvs) <- c("cpg", "gene", "cpg_chr", "cpg_pos", "cpg_relation_island", "gene_chr", "gene_start_pos", "gene_stop_pos", "hgnc_symbol")
+```
+
+```{r}
+cpgs_to_map_eqtm_cvs <- cpgs_genes_eqtms_cvs[,c("cpg", "cpg_relation_island", "cpg_pos", "cpg_chr")]
+cpgs_to_map_eqtm_cvs <- unique(cpgs_genes_eqtms_cvs)
+```
+
+```{r}
+prop.table(table(cpgs_to_map_eqtm_cvs$cpg_relation_island))*100
+```
+
+*for CpGs not among eqtms*
+```{r}
+cpgs_cvs_no_eqtms <- subset(cpgs_all_cvs, !(Name %in% bme_eqtm_cvs$eSNPs))
+names(cpgs_cvs_no_eqtms) <- c("cpg_chr", "cpg_pos", "cpg", "cpg_relation_to_island")
+```
+
+```{r}
+prop.table(table(cpgs_cvs_no_eqtms$cpg_relation_to_island))*100
+```
+
+**Plot**
+%
+```{r}
+percents_cpgs_anno_cvs_no_eqtms <- data.frame(prop.table(table(cpgs_cvs_no_eqtms$cpg_relation_to_island)))
+names(percents_cpgs_anno_cvs_no_eqtms) <- c("region", "no eQTM CpG")
+percents_cpgs_anno_cvs_no_eqtms$region <- factor(percents_cpgs_anno_cvs_no_eqtms$region, levels = c("N_Shelf", "N_Shore", "Island", "S_Shore", "S_Shelf", "OpenSea"))
+
+percents_cpgs_anno_cvs_eqtms <- data.frame(prop.table(table(cpgs_to_map_eqtm_cvs$cpg_relation_island)))
+names(percents_cpgs_anno_cvs_eqtms) <- c("region", "eQTM CpG")
+percents_cpgs_anno_cvs_eqtms$region <- factor(percents_cpgs_anno_cvs_eqtms$region, levels = c("N_Shelf", "N_Shore", "Island", "S_Shore", "S_Shelf", "OpenSea"))
+
+percents_eqtms_anno_cvs <- merge(percents_cpgs_anno_cvs_no_eqtms, percents_cpgs_anno_cvs_eqtms, by = "region")
+percents_eqtms_anno_cvs <- reshape2::melt(percents_eqtms_anno_cvs, id.vars = c("region"))
+```
+
+```{r}
+barplot_cpgs_annotation_eqtms_cvs <- 
+  barplot_cpgs_regions(data = percents_eqtms_anno_cvs, group = variable, yvalues = value, xvalues = region, plottitle = "eQTMs CVS") 
+```
+
+### Plot
+```{r}
+barplot_cpgs_annotation_meqtls_placenta
+barplot_cpgs_annotation_meqtls_cvs
+barplot_cpgs_annotation_eqtms_placenta
+barplot_cpgs_annotation_eqtms_cvs
+```
+
+```{r}
+meqtl_eqtm_cpg_annotation_plot <- plot_grid(barplot_cpgs_annotation_meqtls_placenta, barplot_cpgs_annotation_meqtls_cvs, barplot_cpgs_annotation_eqtms_placenta, barplot_cpgs_annotation_eqtms_cvs, ncol=2, align = "v", labels=c('a', 'b', 'c', 'd'))
+```
+
+```{r}
+ggsave(here("Analyses/Results/AnnotationInfos/", "meQTLs_eQTMs_cpg_annotation_plot.pdf"),
+meqtl_eqtm_cpg_annotation_plot, width=standard_width_mm_single, height=standard_height_mm/3, units="mm", dpi=600, scale=2, device = cairo_pdf)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

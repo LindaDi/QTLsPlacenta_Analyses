@@ -1,0 +1,90 @@
+---
+title: "Clumping file read eQTLs"
+output: html_document
+date: "2022"
+---
+
+read files from clumping 
+
+# load packages
+```{r}
+library(here)
+library(data.table)
+library(dplyr)
+library(tibble)
+library(tidyr)
+```
+
+# load functions
+```{r}
+source(here("03_Code_Scripts", "functions.R"))
+```
+
+
+# eQTLs
+
+## placenta
+
+### read clumped results (BootstrapQTL Results)
+
+```{r}
+clump_eqtls_placenta <- read_clumped_files(here("02_Data/clumping/placenta-eqtl_filesfromclump"))
+```
+
+```{r}
+clump_eqtls_placenta$genename <- gsub("clump_|.clumped", "", clump_eqtls_placenta$V1)
+```
+
+reassure that we have all genes
+```{r}
+setdiff(unique_eGenes_placenta, clump_eqtls_placenta$genename)
+length(unique(clump_eqtls_placenta$genename))
+```
+
+```{r}
+bme_eqtl_placenta_clumped <- merge(bme_eqtl_placenta, clump_eqtls_placenta, by.x=c("eSNPs", "eGene"), by.y=c("SNP", "genename"))
+```
+
+```{r}
+dim(unique(bme_eqtl_placenta_clumped))
+```
+
+```{r}
+save(bme_eqtl_placenta_clumped, file = here("02_Data/QTL_Data/", "bme_eqtl_placenta_clumped.Rdata"))
+write.table(bme_eqtl_placenta_clumped, file = here("02_Data/QTL_Data/", "bme_eqtl_placenta_clumped.txt"), quote = F, col.names = T, row.names = F, sep = "\t")
+write.csv(bme_eqtl_placenta_clumped, here("02_Data/QTL_Data/", "bme_eqtl_placenta_clumped.cvs"), row.names = FALSE)
+```
+
+## cvs
+
+#### clumped results (BootstrapQTL Results)
+
+```{r}
+clump_eqtls_cvs <- read_clumped_files(here("02_Data/clumping/cvs-eqtl_filesfromclump"))
+```
+
+```{r}
+clump_eqtls_cvs$genename <- gsub("clump_|.clumped", "", clump_eqtls_cvs$V1)
+```
+
+reassure that we have all genes
+```{r}
+setdiff(unique_eGenes_cvs, clump_eqtls_cvs$genename)
+length(unique(clump_eqtls_cvs$genename))
+```
+
+```{r}
+bme_eqtl_cvs_clumped <- merge(bme_eqtl_cvs, clump_eqtls_cvs, by.x=c("eSNPs", "eGene"), by.y=c("SNP", "genename"))
+```
+
+```{r}
+dim(unique(bme_eqtl_cvs_clumped))
+```
+
+```{r}
+save(bme_eqtl_cvs_clumped, file = here("02_Data/QTL_Data/", "bme_eqtl_cvs_clumped.Rdata"))
+write.table(bme_eqtl_cvs_clumped, file = here("02_Data/QTL_Data/", "bme_eqtl_cvs_clumped.txt"), quote = F, col.names = T, row.names = F, sep = "\t")
+write.csv(bme_eqtl_cvs_clumped, here("02_Data/QTL_Data/", "bme_eqtl_cvs_clumped.cvs"), row.names = FALSE)
+```
+
+

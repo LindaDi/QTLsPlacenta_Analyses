@@ -1,0 +1,149 @@
+---
+title: "Plots Placenta and CVS"
+author: Linda Dieckmann
+date: January 2023
+output: github_document
+---
+
+# load packages
+```{r, warning=FALSE}
+library(here)
+library(cowplot)
+```
+
+If you update package(s) call 
+  renv::snapshot() 
+to save the current picture of the project.
+
+```{r}
+writeLines(capture.output(sessionInfo()), here("Analyses/Scripts/sessionInfos/", "sessionInfo_Script_4_4.txt"))
+```
+
+```{r}
+source(here("Analyses/Scripts/", "functions.R"))
+```
+
+
+MAIN DATA
+##################################################################################################################################
+# load data
+```{r}
+load(here("02_Data/CVS_Placenta/", "d_proportion_eqtl_signs.Rdata"))
+load(here("02_Data/CVS_Placenta/", "d_proportion_meqtl_signs.Rdata"))
+load(here("02_Data/CVS_Placenta/", "d_proportion_eqtm_signs.Rdata"))
+
+load(here("02_Data/CVS_Placenta/", "data_for_eqtl_plot.Rdata"))
+load(here("02_Data/CVS_Placenta/", "data_for_eqtm_plot.Rdata"))
+load(here("02_Data/CVS_Placenta/", "data_for_meqtl_plot.Rdata"))
+
+load(here("02_Data/CVS_Placenta/", "eQTLs_placenta_cvs_all_sig.Rdata"))
+load(here("02_Data/CVS_Placenta/", "meQTLs_placenta_cvs_all_sig.Rdata"))
+load(here("02_Data/CVS_Placenta/", "eQTMs_placenta_cvs_all_sig.Rdata"))
+
+load(here("02_Data/CVS_Placenta/", "common_pairs_previous_eqtls_scaled_statistics_absolute_betas_long.Rdata"))
+load(here("02_Data/CVS_Placenta/", "common_pairs_previous_meqtls_scaled_statistics_absolute_betas_long.Rdata"))
+load(here("02_Data/CVS_Placenta/", "common_pairs_previous_eqtms_scaled_statistics_absolute_betas_long.Rdata"))
+```
+
+
+# Plot
+```{r}
+scatter_eqtl <- scatterplot_signs(eQTLs_placenta_cvs_all_sig, plottitle = "eQTLs")+
+    scale_y_continuous(limits = c(-2, 2), breaks = seq(-2, 2, by = 1)) +
+    scale_x_continuous(limits = c(-2, 2), breaks = seq(-2, 2, by = 1)) 
+
+scatter_meqtl <- scatterplot_signs(meQTLs_placenta_cvs_all_sig, plottitle = "meQTLs")+
+    scale_y_continuous(limits = c(-4.5, 4.5), breaks = seq(-4, 4, by = 2)) +
+    scale_x_continuous(limits = c(-4.5, 4.5), breaks = seq(-4, 4, by = 2)) 
+
+scatter_eqtm <- scatterplot_signs_eqtms(eQTMs_placenta_cvs_all_sig, plottitle = "eQTMs")+
+    scale_y_continuous(limits = c(-2, 2), breaks = seq(-2, 2, by = 1)) +
+    scale_x_continuous(limits = c(-2, 2), breaks = seq(-2, 2, by = 1)) 
+```
+
+```{r}
+legend_scatter <- get_legend(scatter_eqtl + theme(legend.box.margin = margin(0, 0, 10, 12)))
+```
+
+```{r}
+pscatter <-
+  plot_grid(
+    scatter_eqtl + theme(legend.position = "none"),
+    scatter_meqtl + theme(legend.position = "none"),
+    scatter_eqtm + theme(legend.position = "none"),
+    align = "vh",
+    labels = c("a", "b", "c"),
+    hjust = -1,
+    nrow = 1
+  )
+```
+
+
+```{r}
+eqtl_top_association_plot <- 
+  snp_vs_expression_plot("ENSG00000147813", "rs9657360", "NAPRT1", geno_t_fullqced_IDc_placenta_ordered_eqtl, resid_inv_norm_placenta_tmm_filtered_ordered_eqtl, geno_t_fullqced_IDc_cvs_ordered_eqtl, resid_inv_norm_cvs_tmm_filtered_ordered_eqtl)
+
+meqtl_top_association_plot <- 
+snp_vs_methylation_plot("cg12454169", "rs72853154", geno_t_fullqced_IDc_placenta_ordered_meqtl, resid_methylation_M_placenta_filtered_ordered_meqtl, geno_t_fullqced_IDc_cvs_ordered_meqtl, resid_methylation_M_cvs_filtered_ordered_meqtl)
+
+eqtm_top_association_plot <- 
+cpg_vs_expression_plot("ENSG00000147813", "cg08017634", "NAPRT1", methylation_M_placenta_filtered_ordered_eqtm, resid_inv_norm_placenta_tmm_filtered_ordered_eqtm, methylation_M_cvs_filtered_ordered_eqtm, resid_inv_norm_cvs_tmm_filtered_ordered_eqtm)
+```
+
+```{r}
+phitsr <-
+  plot_grid(
+    eqtl_top_association_plot,
+    meqtl_top_association_plot,
+    eqtm_top_association_plot,
+    align = "vh",
+    labels = c("d", "e", "f"),
+    hjust = -1,
+    nrow = 1
+  )
+```
+
+```{r}
+qtl_placenta_cvs_congruency_plot <- plot_grid(pscatter, legend_scatter, phitsr, ncol = 1, rel_heights = c(1, .2, 1))
+```
+
+```{r}
+qtl_placenta_cvs_congruency_plot
+```
+
+
+```{r}
+boxplot_common_hits_top_eqtls <- boxplot_paired_data(data = common_pairs_previous_eqtls_scaled_statistics_absolute_betas_long, textlabel = "n = 2 eQTLs", plottitle = "eQTLs")
+# \n (n = 84 samples)
+
+boxplot_common_hits_top_meqtls <- boxplot_paired_data(data = common_pairs_previous_meqtls_scaled_statistics_absolute_betas_long, textlabel = "n = 16,305 meQTLs", plottitle = "meQTLs")
+boxplot_common_hits_top_meqtls$layers[[1]] <- NULL
+boxplot_common_hits_top_meqtls$layers[[2]] <- NULL
+# \n (n = 77 samples)
+
+boxplot_common_hits_top_eqtms <- boxplot_paired_data(data = common_pairs_previous_eqtms_scaled_statistics_absolute_betas_long, textlabel = "n = 17 eQTMs", plottitle = "eQTMs")
+# \n (n = 76 samples)
+```
+
+```{r}
+qtl_placenta_cvs_congruency_plot_betas <- plot_grid(boxplot_common_hits_top_eqtls, boxplot_common_hits_top_meqtls, boxplot_common_hits_top_eqtms, align = "vh",
+    labels = c("a", "b", "c"),
+    hjust = -1,
+    nrow = 1)
+
+qtl_placenta_cvs_congruency_plot_betas
+```
+
+
+## save
+```{r}
+ggsave(here("Analyses/Results/CVSvsPlacenta/", "qtl_placenta_cvs_congruency_plot.png"), 
+       qtl_placenta_cvs_congruency_plot, width=standard_width_mm_single, height=standard_height_mm/2, units="mm", dpi=300, scale=2, bg = "white")
+```
+
+
+```{r}
+ggsave(here("Analyses/Results/CVSvsPlacenta/", "qtl_placenta_cvs_congruency_plot_betas.png"), 
+       qtl_placenta_cvs_congruency_plot_betas, width=standard_width_mm_single, height=standard_height_mm/4, units="mm", dpi=300, scale=2, bg = "white")
+```
+

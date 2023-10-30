@@ -1,0 +1,151 @@
+---
+title: "Clumping preparation meQTLs"
+output: html_document
+date: "2022"
+---
+
+prepare files for clumping 
+
+# load packages
+```{r}
+library(here)
+library(data.table)
+library(dplyr)
+library(tibble)
+library(tidyr)
+```
+
+# load functions
+```{r}
+source(here("03_Code_Scripts", "functions.R"))
+```
+
+# load data
+
+QTL analyses results - BootstrapQTL
+
+```{r}
+# meQTL
+
+# Bootstrap QTL (data frame with results for significant hits)
+load(here("02_Data/MatrixEQTL_Output", "bme_meqtl_placenta.Rdata"))
+load(here("02_Data/MatrixEQTL_Output", "bme_meqtl_cvs.Rdata"))
+```
+
+# meQTLs
+
+## placenta
+
+### for clumping (BootstrapQTL Results)
+here we have such large data that we cannot save a file for every single cpgs
+```{r}
+dim(bme_meqtl_placenta)
+length(bme_meqtl_placenta$eSNPs < 0.05)
+```
+7,403,684 associations
+
+```{r}
+unique_eCpGs_placenta <- unique(bme_meqtl_placenta$eGene)
+```
+109,846 unique eCpGs
+
+```{r}
+write.table(unique_eCpGs_placenta, here("02_Data/clumping/placenta-meqtl_filesforclump", "unique_eCpGs_placenta.txt"), quote = F, row.names = F, col.names=F, sep = "\t")
+```
+
+```{r}
+write.table(bme_meqtl_placenta, here("02_Data/clumping/placenta-meqtl_filesforclump", "bme_meqtl_placenta.txt"), quote = F, row.names = F, col.names=F, sep = "\t")
+```
+
+```{r}
+splitbydupcpgs_bme_meqtl_placenta <- split(bme_meqtl_placenta, duplicated(bme_meqtl_placenta$eGene) | duplicated(bme_meqtl_placenta$eGene, fromLast = TRUE))
+# splitbydupcpgs_bme_meqtl_placenta[[1]] is with only once occuring CpGs and splitbydupcpgs_bme_meqtl_placenta[[2]] with multiple
+nrow(splitbydupcpgs_bme_meqtl_placenta[[1]])
+nrow(splitbydupcpgs_bme_meqtl_placenta[[2]])
+eCpGs_single_associations <- splitbydupcpgs_bme_meqtl_placenta[[1]]$eGene
+```
+
+7,052 CpGs have only one SNP and can stay like this
+```{r}
+clumped_set1_meqtl_placenta <- splitbydupcpgs_bme_meqtl_placenta[[1]]
+```
+
+```{r}
+unique_eCpGs_placenta_for_clump <- setdiff(unique_eCpGs_placenta, eCpGs_single_associations) 
+length(unique_eCpGs_placenta_for_clump)
+```
+
+102,794 unique CpGs where we need clump
+```{r}
+bme_meqtl_placenta_for_clump <- bme_meqtl_placenta[bme_meqtl_placenta$eGene %in% unique_eCpGs_placenta_for_clump, ]
+length(unique(bme_meqtl_placenta_for_clump$eGene))
+dim(bme_meqtl_placenta_for_clump) # 7,396,632
+```
+
+```{r}
+write.table(unique_eCpGs_placenta_for_clump, here("02_Data/clumping/placenta-meqtl_filesforclump", "unique_eCpGs_placenta_for_clump.txt"), quote = F, row.names = F, col.names=F, sep = "\t")
+```
+
+```{r}
+write.table(bme_meqtl_placenta_for_clump, here("02_Data/clumping/placenta-meqtl_filesforclump", "bme_meqtl_placenta_for_clump.txt"), quote = F, row.names = F, col.names=F, sep = "\t")
+```
+
+
+## cvs
+
+#### for clumping (BootstrapQTL Results)
+here we have such large data that we cannot save a file for every single cpgs
+```{r}
+dim(bme_meqtl_cvs)
+length(bme_meqtl_cvs$eSNPs < 0.05)
+```
+7,403,684 associations
+
+```{r}
+unique_eCpGs_cvs <- unique(bme_meqtl_cvs$eGene)
+```
+57,426 unique eCpGs
+
+
+```{r}
+write.table(unique_eCpGs_cvs, here("02_Data/clumping/cvs-meqtl_filesforclump", "unique_eCpGs_cvs.txt"), quote = F, row.names = F, col.names=F, sep = "\t")
+```
+
+```{r}
+write.table(bme_meqtl_cvs, here("02_Data/clumping/cvs-meqtl_filesforclump", "bme_meqtl_cvs.txt"), quote = F, row.names = F, col.names=F, sep = "\t")
+```
+
+```{r}
+splitbydupcpgs_bme_meqtl_cvs <- split(bme_meqtl_cvs, duplicated(bme_meqtl_cvs$eGene) | duplicated(bme_meqtl_cvs$eGene, fromLast = TRUE))
+# splitbydupcpgs_bme_meqtl_placenta[[1]] is with only once occuring CpGs and splitbydupcpgs_bme_meqtl_placenta[[2]] with multiple
+nrow(splitbydupcpgs_bme_meqtl_cvs[[1]])
+nrow(splitbydupcpgs_bme_meqtl_cvs[[2]])
+eCpGs_single_associations_cvs <- splitbydupcpgs_bme_meqtl_cvs[[1]]$eGene
+```
+
+4,554 CpGs have only one SNP and can stay like this
+```{r}
+clumped_set1_meqtl_cvs <- splitbydupcpgs_bme_meqtl_cvs[[1]]
+```
+
+```{r}
+unique_eCpGs_cvs_for_clump <- setdiff(unique_eCpGs_cvs, eCpGs_single_associations_cvs) 
+length(unique_eCpGs_cvs_for_clump)
+```
+
+52872 unique CpGs where we need clump
+```{r}
+bme_meqtl_cvs_for_clump <- bme_meqtl_cvs[bme_meqtl_cvs$eGene %in% unique_eCpGs_cvs_for_clump, ]
+length(unique(bme_meqtl_cvs_for_clump$eGene))
+dim(bme_meqtl_cvs_for_clump) # 2,959,679
+```
+
+```{r}
+write.table(unique_eCpGs_cvs_for_clump, here("02_Data/clumping/cvs-meqtl_filesforclump", "unique_eCpGs_cvs_for_clump.txt"), quote = F, row.names = F, col.names=F, sep = "\t")
+```
+
+```{r}
+write.table(bme_meqtl_cvs_for_clump, here("02_Data/clumping/cvs-meqtl_filesforclump", "bme_meqtl_cvs_for_clump.txt"), quote = F, row.names = F, col.names=F, sep = "\t")
+```
+
+

@@ -1,0 +1,435 @@
+---
+title: "Script_1_2_General_Confound_Check"
+author: Linda Dieckmann
+date: 2022
+output: github_document
+---
+
+In this notebook we load our prepared data for QTL analyses together with covariates. We take a look at the variation in the -omics data and the relation with covariates.
+
+# load packages
+```{r, warning=FALSE}
+library(here)
+library(factoextra)
+library(car)
+library(dplyr)
+library(RColorBrewer)
+library(reshape2)
+library(tidyverse)
+library(cowplot)
+```
+
+If you update package(s) call 
+  renv::snapshot() 
+to save the current picture of the project.
+
+```{r}
+writeLines(capture.output(sessionInfo()), here("Analyses/Scripts/sessionInfos/", "sessionInfo_Script_1_2.txt"))
+```
+
+# load functions
+```{r}
+source(here("Analyses/Scripts/", "functions.R"))
+```
+
+# load data
+## RNASeq and confounders
+```{r}
+load(here("02_Data/prepared/", "inv_norm_placenta_tmm_filtered.Rdata"))
+load(here("02_Data/prepared/", "inv_norm_cvs_tmm_filtered.Rdata"))
+```
+
+```{r}
+load(here("02_Data/prepared/", "confounders_RNA_placenta.Rdata"))
+load(here("02_Data/prepared/", "confounders_RNA_cvs.Rdata"))
+```
+
+## methylation and confounders
+```{r}
+load(here("02_Data/prepared/", "methylation_M_placenta_filtered.Rdata"))
+load(here("02_Data/prepared/", "methylation_M_cvs_filtered.Rdata"))
+```
+
+```{r}
+load(here("02_Data/prepared/", "confounders_meth_placenta.Rdata"))
+load(here("02_Data/prepared/", "confounders_meth_cvs.Rdata"))
+```
+
+# PCA for variability across samples in expression and methylation
+
+We now do a PCA (SVD) on the scaled inverse rank normalized RNA counts (transposed = columns are genes and rows are persons)
+From the final object you can access
+* $rotation, which is the matrix of variable loadings (columns are eigenvectors), i.e. how do genes load on PCs
+* $x, which are the coordinates of the individuals on the principal components
+
+Take a look at the variance which can be explained among the persons using the Principal Components.
+
+## RNA 
+### Placenta
+```{r}
+pca_RNA_placenta <- prcomp(t(inv_norm_placenta_tmm_filtered), scale = T) # make genes in columns, samples in rows
+PCsamples_RNA_placenta <- data.frame(pca_RNA_placenta$x)
+```
+
+```{r}
+summary_pca_RNA_placenta <- summary(pca_RNA_placenta)
+summary_pca_RNA_placenta$importance[,1:10]
+# get explained variance for first 10 PCs
+explainedvar_pca_RNA_placenta <- summary_pca_RNA_placenta$importance[2,1:10]*100
+```
+
+```{r}
+factoextra::fviz_eig(pca_RNA_placenta)
+```
+
+```{r}
+save(PCsamples_RNA_placenta, file = here("02_Data/prepared", "PCsamples_RNA_placenta.Rdata"))
+save(pca_RNA_placenta, file = here("02_Data/prepared", "pca_RNA_placenta.Rdata"))
+```
+
+#### few plots to check for outliers
+```{r}
+basic_gg_point_plot(PCsamples_RNA_placenta, "PC1", "PC2", "RNA Placenta") 
+```
+
+
+```{r}
+# shape data for boxplots
+PCsamples_RNA_placenta_melt <- reshape2::melt(cbind(PCsamples_RNA_placenta[,1:5], "ID" = rownames(PCsamples_RNA_placenta)))
+PCsamples_RNA_placenta_melt <- PCsamples_RNA_placenta_melt %>% group_by(variable) %>% mutate(is_outlier=ifelse(is_outlier(value),value, as.numeric(NA)))
+PCsamples_RNA_placenta_melt$ID[which(is.na(PCsamples_RNA_placenta_melt$is_outlier))] <- as.numeric(NA)
+```
+
+
+```{r}
+basic_gg_box_plot(PCsamples_RNA_placenta_melt, "variable", "value", "RNA Placenta")
+```
+
+### CVS
+```{r}
+pca_RNA_cvs <- prcomp(t(inv_norm_cvs_tmm_filtered), scale = T)
+PCsamples_RNA_cvs <- data.frame(pca_RNA_cvs$x)
+```
+
+```{r}
+summary_pca_RNA_cvs <- summary(pca_RNA_cvs)
+summary_pca_RNA_cvs$importance[,1:10]
+# get explained variance for first 10 PCs
+explainedvar_pca_RNA_cvs <- summary_pca_RNA_cvs$importance[2,1:10]*100
+```
+
+```{r}
+factoextra::fviz_eig(pca_RNA_cvs)
+```
+
+
+
+```{r}
+save(PCsamples_RNA_cvs, file = here("02_Data/prepared", "PCsamples_RNA_cvs.Rdata"))
+save(pca_RNA_cvs, file = here("02_Data/prepared", "pca_RNA_cvs.Rdata"))
+```
+
+#### we make a few plots to look for outliers
+
+```{r}
+basic_gg_point_plot(PCsamples_RNA_cvs, "PC1", "PC2", "RNA CVS") 
+```
+
+```{r}
+# shape data for boxplots
+PCsamples_RNA_cvs_melt <- reshape2::melt(cbind(PCsamples_RNA_cvs[,1:5], "ID" = rownames(PCsamples_RNA_cvs)))
+PCsamples_RNA_cvs_melt <- PCsamples_RNA_cvs_melt %>% group_by(variable) %>% mutate(is_outlier=ifelse(is_outlier(value),value, as.numeric(NA)))
+PCsamples_RNA_cvs_melt$ID[which(is.na(PCsamples_RNA_cvs_melt$is_outlier))] <- as.numeric(NA)
+basic_gg_box_plot(PCsamples_RNA_cvs_melt, "variable", "value", "RNA CVS")
+```
+
+## methylation
+### Placenta
+
+```{r}
+pca_meth_placenta <- prcomp(t(methylation_M_placenta_filtered), scale = T)
+PCsamples_meth_placenta <- data.frame(pca_meth_placenta$x)
+```
+
+```{r}
+summary_pca_meth_placenta <- summary(pca_meth_placenta)
+summary_pca_meth_placenta$importance[,1:10]
+# get explained variance for first 10 PCs
+explainedvar_pca_meth_placenta <- summary_pca_meth_placenta$importance[2,1:10]*100
+```
+
+```{r}
+factoextra::fviz_eig(pca_meth_placenta)
+```
+
+```{r}
+save(PCsamples_meth_placenta, file = here("02_Data/prepared", "PCsamples_meth_placenta.Rdata"))
+save(pca_meth_placenta, file = here("02_Data/prepared", "pca_meth_placenta.Rdata"))
+```
+
+#### we make a few plots to look for outliers
+```{r}
+basic_gg_point_plot(PCsamples_meth_placenta, "PC1", "PC2", "Methylation Placenta") 
+```
+
+```{r}
+# shape data for boxplots
+PCsamples_meth_placenta_melt <- reshape2::melt(cbind(PCsamples_meth_placenta[,1:5], "ID" = rownames(PCsamples_meth_placenta)))
+PCsamples_meth_placenta_melt <- PCsamples_meth_placenta_melt %>% group_by(variable) %>% mutate(is_outlier=ifelse(is_outlier(value),value, as.numeric(NA)))
+PCsamples_meth_placenta_melt$ID[which(is.na(PCsamples_meth_placenta_melt$is_outlier))] <- as.numeric(NA)
+basic_gg_box_plot(PCsamples_meth_placenta_melt, "variable", "value", "Methylation Placenta")
+```
+
+### CVS
+
+```{r}
+pca_meth_cvs <- prcomp(t(methylation_M_cvs_filtered), scale = T)
+PCsamples_meth_cvs <- data.frame(pca_meth_cvs$x)
+```
+
+```{r}
+summary_pca_meth_cvs <- summary(pca_meth_cvs)
+summary_pca_meth_cvs$importance[,1:10]
+# get explained variance for first 10 PCs
+explainedvar_pca_meth_cvs <- summary_pca_meth_cvs$importance[2,1:10]*100
+```
+
+```{r}
+factoextra::fviz_eig(pca_meth_cvs)
+```
+
+```{r}
+save(PCsamples_meth_cvs, file = here("02_Data/prepared", "PCsamples_meth_cvs.Rdata"))
+save(pca_meth_cvs, file = here("02_Data/prepared", "pca_meth_cvs.Rdata"))
+```
+
+#### we make a few plots to look for outliers
+
+```{r}
+basic_gg_point_plot(PCsamples_meth_cvs, "PC1", "PC2", "Methylation CVS") 
+```
+
+```{r}
+# shape data for boxplots
+PCsamples_meth_cvs_melt <- reshape2::melt(cbind(PCsamples_meth_cvs[,1:5], "ID" = rownames(PCsamples_meth_cvs)))
+PCsamples_meth_cvs_melt <- PCsamples_meth_cvs_melt %>% group_by(variable) %>% mutate(is_outlier=ifelse(is_outlier(value),value, as.numeric(NA)))
+PCsamples_meth_cvs_melt$ID[which(is.na(PCsamples_meth_cvs_melt$is_outlier))] <- as.numeric(NA)
+basic_gg_box_plot(PCsamples_meth_cvs_melt, "variable", "value", "Methylation CVS")
+```
+
+## plot of explained variances
+```{r}
+explained_variances <- cbind.data.frame(explainedvar_pca_RNA_placenta, explainedvar_pca_RNA_cvs, explainedvar_pca_meth_placenta, explainedvar_pca_meth_cvs)
+colnames(explained_variances) <- c("RNA-Seq Placenta", "RNA-Seq CVS", "DNAm Placenta", "DNAm CVS")
+explained_variances$PC <- rownames(explained_variances)
+explained_variances$PC <- factor(explained_variances$PC, levels = explained_variances$PC)
+```
+
+
+```{r}
+explained_variances_pcs_plot <- 
+melt(explained_variances,"PC") %>%
+  ggplot(aes(x = PC, y=value)) +
+  geom_bar(aes(fill=variable),stat="identity", position ="dodge") + 
+  scale_fill_manual(values=greysPalette) +
+  theme_minimal()+ 
+  theme(
+      axis.line = element_line(colour = "grey"),
+      panel.background = element_blank(),
+      text = element_text(family = "Helvetica", size = standard_textsize),
+      axis.title = element_text(family = "Helvetica", size = standard_textsize),
+      axis.text.y = element_text(family = "Helvetica", size = standard_textsize),
+      axis.text.x = element_text(family = "Helvetica", size = standard_textsize, angle=-40, hjust=.1),
+      legend.title=element_blank(),
+      legend.text = element_text(family = "Helvetica", size = standard_textsize)
+    ) +
+  scale_y_continuous(breaks = scales::pretty_breaks(n = 6)) +
+    labs(x = "", y = "proportion of explained variance (%)")
+```
+
+
+```{r}
+ggsave(here("Analyses/Results/ConfoundCheck/", "PCs_explained_variance.pdf"),
+       explained_variances_pcs_plot,
+       width=standard_width_mm_single, height=standard_height_mm/3, units="mm", dpi=600, scale=2, device = cairo_pdf)
+```
+
+# Check influence of confounding variables on PC's
+
+we will consider first 10 PCs
+```{r}
+dependentPCs <- sprintf("PC%d", seq(1:10))
+```
+
+## RNA
+### Placenta
+
+I) merge PCs and confounders
+```{r}
+RNA_PCs_confounders_placenta <- merge(PCsamples_RNA_placenta, confounders_RNA_placenta, by.x = "row.names", by.y = "IDfamily")
+dim(RNA_PCs_confounders_placenta)
+```
+
+II) test the influence of potential confounders on variation in PC's using a linear model.
+
+```{r}
+predictors_RNA_PCs_placenta <- as.list(c("Child_Birth_Weight", "Gestational_Age_Weeks", "Child_Sex", "Induced_Labour", "Delivery_mode_3l", "Maternal_Diabetes_dichotom", "Maternal_Hypertension_dichotom", "Parity_dichotom", "Maternal_Body_Mass_Index_in_Early_Pregnancy", "Maternal_Age_Years", "smoking_dichotom", "caseVScontrol", "SV1", "ethnicity1 + ethnicity2", "Time_between_Birth_RNA_Sample_Minutes", "Time_between_Birth_9site_Sample_Minutes"))
+```
+
+```{r}
+# run linear model
+p_data_confounders_placenta_RNA <- lm_p_data_confounders(y = dependentPCs, preds = predictors_RNA_PCs_placenta, dataframe = RNA_PCs_confounders_placenta)
+colnames(p_data_confounders_placenta_RNA) <- c("birth weight", "gestational age (weeks)", "child sex", "induced labor", "delivery mode", "maternal diabetes", "maternal hypertensive disorder", "parity", "maternal BMI", "maternal age (years)", "maternal smoking", "case vs. control", "SV", "ancestry", "time between birth RNA sample (minutes)", "time between birth 9site sample (minutes)")
+```
+
+```{r, warning=FALSE}
+# assign significances
+pfp_rna_placenta <- as.matrix(p_data_confounders_placenta_RNA)
+pfp_rna_placenta[pfp_rna_placenta >= 0.05] <- "n.s."
+pfp_rna_placenta[pfp_rna_placenta < 0.05 & pfp_rna_placenta >= 0.01] <- "< 0.05"
+pfp_rna_placenta[pfp_rna_placenta < 0.01 & pfp_rna_placenta >= 0.001] <- "< 0.01"
+pfp_rna_placenta[as.numeric(pfp_rna_placenta) < 0.001] <- "< 0.001"
+pfp_rna_placenta <- t(pfp_rna_placenta)
+```
+
+```{r}
+rpfp_rna_placenta <- reshape2::melt(pfp_rna_placenta)
+```
+
+```{r}
+plot_pc_predictor_heatmap_rna_placenta <- pvalue_sig_plot(datamatrix = rpfp_rna_placenta, dataset = "RNA-Seq Placenta")
+```
+
+### CVS
+
+I) merge PCs and confounders
+```{r}
+RNA_PCs_confounders_cvs <- merge(PCsamples_RNA_cvs, confounders_RNA_cvs, by.x = "row.names", by.y = "IDfamily")
+dim(RNA_PCs_confounders_cvs)
+```
+
+II) test the influence of potential confounders on variation in PC's using a linear model.
+```{r}
+predictors_RNA_PCs_cvs <- as.list(c("Child_Birth_Weight", "gestage_at_CVS_weeks", "Child_Sex", "Induced_Labour", "Delivery_mode_3l", "Maternal_Diabetes_dichotom", "Maternal_Hypertension_dichotom",  "Parity_dichotom", "Maternal_Body_Mass_Index_in_Early_Pregnancy", "Maternal_Age_Years", "smoking_dichotom", "SV1", "ethnicity1 + ethnicity2"))
+```
+
+```{r}
+p_data_confounders_cvs_RNA <- lm_p_data_confounders(y = dependentPCs, preds = predictors_RNA_PCs_cvs, dataframe = RNA_PCs_confounders_cvs)
+colnames(p_data_confounders_cvs_RNA) <- c("birth weight", "gestational age at sampling (weeks)", "child sex", "induced labor", "delivery mode", "maternal diabetes", "maternal hypertensive disorder", "parity", "maternal BMI", "maternal age (years)", "maternal smoking",  "SV", "ancestry")
+```
+
+```{r, warning=FALSE}
+pfp_rna_cvs <- as.matrix(p_data_confounders_cvs_RNA)
+pfp_rna_cvs[pfp_rna_cvs >= 0.05] <- "n.s."
+pfp_rna_cvs[pfp_rna_cvs < 0.05 & pfp_rna_cvs >= 0.01] <- "< 0.05"
+pfp_rna_cvs[pfp_rna_cvs < 0.01 & pfp_rna_cvs >= 0.001] <- "< 0.01"
+pfp_rna_cvs[as.numeric(pfp_rna_cvs) < 0.001] <- "< 0.001"
+pfp_rna_cvs <- t(pfp_rna_cvs)
+```
+
+```{r}
+rpfp_rna_cvs <- reshape2::melt(pfp_rna_cvs)
+```
+
+```{r}
+plot_pc_predictor_heatmap_rna_cvs <- pvalue_sig_plot(datamatrix = rpfp_rna_cvs, dataset = "RNA-Seq CVS")
+```
+
+## Methylation
+### Placenta
+
+I) merge PCs and confounders
+```{r}
+Meth_PCs_confounders_placenta <- merge(PCsamples_meth_placenta, confounders_meth_placenta, by.x = "row.names", by.y = "IDfamily")
+dim(Meth_PCs_confounders_placenta)
+```
+
+II) test the influence of potential confounders on variation in PC's using a linear model.
+
+```{r}
+predictors_meth_PCs_placenta <- as.list(c("Child_Birth_Weight", "Gestational_Age_Weeks", "Child_Sex", "Induced_Labour", "Delivery_mode_3l", "Maternal_Diabetes_dichotom", "Maternal_Hypertension_dichotom", "Parity_dichotom", "Maternal_Body_Mass_Index_in_Early_Pregnancy", "Maternal_Age_Years", "smoking_dichotom", "caseVScontrol", "PC1_cells + PC2_cells + PC3_cells", "ethnicity1 + ethnicity2"))
+```
+
+```{r}
+p_data_confounders_placenta_meth <- lm_p_data_confounders(y = dependentPCs, preds = predictors_meth_PCs_placenta, dataframe = Meth_PCs_confounders_placenta)
+colnames(p_data_confounders_placenta_meth) <- c("birth weight", "gestational age (weeks)", "child sex", "induced labor", "delivery mode", "maternal diabetes", "maternal hypertensive disorder", "parity", "maternal BMI", "maternal age (years)", "maternal smoking", "case vs. control",  "PCs cell types", "ancestry")
+```
+
+```{r, warning=FALSE}
+pfp_meth_placenta <- as.matrix(p_data_confounders_placenta_meth)
+pfp_meth_placenta[pfp_meth_placenta >= 0.05] <- "n.s."
+pfp_meth_placenta[pfp_meth_placenta < 0.05 & pfp_meth_placenta >= 0.01] <- "< 0.05"
+pfp_meth_placenta[pfp_meth_placenta < 0.01 & pfp_meth_placenta >= 0.001] <- "< 0.01"
+pfp_meth_placenta[as.numeric(pfp_meth_placenta) < 0.001] <- "< 0.001"
+pfp_meth_placenta <- t(pfp_meth_placenta)
+```
+
+```{r}
+rpfp_meth_placenta <- reshape2::melt(pfp_meth_placenta)
+```
+
+```{r}
+plot_pc_predictor_heatmap_meth_placenta <- pvalue_sig_plot(datamatrix = rpfp_meth_placenta, dataset = "DNAm Placenta")
+```
+
+
+### CVS
+
+I) merge PCs and confounders
+```{r}
+Meth_PCs_confounders_cvs <- merge(PCsamples_meth_cvs, confounders_meth_cvs, by.x = "row.names", by.y = "IDfamily")
+dim(Meth_PCs_confounders_cvs)
+```
+
+II) test the influence of potential confounders on variation in PC's using a linear model.
+
+```{r}
+predictors_meth_PCs_cvs <- as.list(c("Child_Birth_Weight", "gestage_at_CVS_weeks", "Child_Sex", "Induced_Labour", "Delivery_mode_3l", "Maternal_Diabetes_dichotom", "Maternal_Hypertension_dichotom", "Parity_dichotom", "Maternal_Body_Mass_Index_in_Early_Pregnancy", "Maternal_Age_Years", "smoking_dichotom", "PC1_cells + PC2_cells + PC3_cells + PC4_cells", "ethnicity1 + ethnicity2"))
+```
+
+```{r}
+p_data_confounders_cvs_meth <- lm_p_data_confounders(y = dependentPCs, preds = predictors_meth_PCs_cvs, dataframe = Meth_PCs_confounders_cvs)
+colnames(p_data_confounders_cvs_meth) <- c("birth weight", "gestational age at sampling (weeks)", "child sex", "induced labor", "delivery mode", "maternal diabetes", "maternal hypertensive disorder", "parity", "maternal BMI", "maternal age (years)", "maternal smoking", "PCs cell types", "ancestry")
+```
+
+```{r, warning=FALSE}
+pfp_meth_cvs <- as.matrix(p_data_confounders_cvs_meth)
+pfp_meth_cvs[pfp_meth_cvs >= 0.05] <- "n.s."
+pfp_meth_cvs[pfp_meth_cvs < 0.05 & pfp_meth_cvs >= 0.01] <- "< 0.05"
+pfp_meth_cvs[pfp_meth_cvs < 0.01 & pfp_meth_cvs >= 0.001] <- "< 0.01"
+pfp_meth_cvs[as.numeric(pfp_meth_cvs) < 0.001] <- "< 0.001"
+pfp_meth_cvs <- t(pfp_meth_cvs)
+```
+
+```{r}
+rpfp_meth_cvs <- reshape2::melt(pfp_meth_cvs)
+```
+
+```{r}
+plot_pc_predictor_heatmap_meth_cvs <- pvalue_sig_plot(datamatrix = rpfp_meth_cvs, dataset = "DNAm CVS")
+```
+
+### arrange figures
+```{r}
+legend <- get_legend(
+  plot_pc_predictor_heatmap_meth_cvs + 
+    guides(color = guide_legend(nrow = 1)) +
+    theme(legend.position = "bottom")
+)
+```
+
+```{r}
+g_plot_pc_predictor <- cowplot::plot_grid(plot_pc_predictor_heatmap_rna_placenta, plot_pc_predictor_heatmap_rna_cvs, plot_pc_predictor_heatmap_meth_placenta, plot_pc_predictor_heatmap_meth_cvs, nrow=2, ncol = 2, align = "hv", labels = c("a", "b", "c", "d"))
+```
+
+```{r}
+pp_pc_heat <- plot_grid(g_plot_pc_predictor, legend, rel_heights = c(2, .2), ncol = 1)
+```
+
+
+```{r}
+ggsave(here("Analyses/Results/ConfoundCheck/", "pcs_predictors_heatmap.pdf"),
+       pp_pc_heat,
+       width=standard_width_mm_single, height=standard_height_mm/3, units="mm", dpi=600, scale=2, device = cairo_pdf)
+```
+

@@ -1,0 +1,8 @@
+# gitignore file
+
+# Ignore Mac system files
+.DS_store
+
+# Ignore the Data
+Analyses/Results/
+

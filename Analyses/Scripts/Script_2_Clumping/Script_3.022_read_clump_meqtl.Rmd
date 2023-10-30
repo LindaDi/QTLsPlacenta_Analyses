@@ -1,0 +1,201 @@
+---
+title: "Clumping file read meQTLs"
+output: html_document
+date: "2022"
+---
+
+read files from clumping 
+
+# load packages
+```{r}
+library(here)
+library(data.table)
+library(dplyr)
+library(tibble)
+library(tidyr)
+```
+
+# load functions
+```{r}
+source(here("03_Code_Scripts", "functions.R"))
+```
+
+
+# meQTLs
+
+## placenta
+
+### read clumped results
+
+expected to have 102794 unique CpGs with clumping results, but problems with cluster occuring again
+```{r}
+clump_meqtls_placenta <- read.table(here("02_Data/clumping/placenta-meqtl_filesfromclump", "combined_firstclumprun.txt"))
+colnames(clump_meqtls_placenta) <- c("CpG", "SNP")
+```
+
+```{r}
+dim(clump_meqtls_placenta)
+length(unique(clump_meqtls_placenta$CpG)) # 79846 instead of 102794
+```
+
+```{r}
+# some CpGs were not clumped
+missingCpGs1run <- setdiff(unique_eCpGs_placenta_for_clump, clump_meqtls_placenta$CpG)
+length(missingCpGs1run)
+```
+
+```{r}
+missingCpGs1run[1:2]
+# for these we test if clumping is possible in general
+```
+
+```{r}
+data_cg22780174 <- bme_meqtl_placenta[bme_meqtl_placenta$eGene %in% "cg22780174", ]
+data_cg22780174 <- data_cg22780174[ ,c("eSNPs", "eSNP_pval")]
+colnames(data_cg22780174) <- c("SNP", "P")
+write.table(data_cg22780174, here("02_Data/clumping/placenta-meqtl_filesforclump", "data_cg22780174.txt"), quote = F, row.names = F, col.names=T, sep = "\t")
+```
+
+clump
+```{bash}
+plink --bfile /binder/Linda/Data/ITU/genotypes/QCed_imputed_fullqced_maf_filter/itu_all_qc2_mafiltered --clump /binder/Linda/Processing/P2_Omics_PlacentaTissue/02_Data/clumping/placenta-meqtl_filesforclump/data_cg22780174.txt --clump-r2 0.2 --clump-kb 150 --clump-p1 0.05 --clump-p2 1 --out clump_cg22780174
+
+awk -v cg=cg22780174 'NR != 1 {if($3) print cg " " $3}' clump_cg22780174.clumped >> me-qtl_cis_ind_cpg_snp_associations_cg22780174.txt
+```
+
+```{r}
+data_cg04373140 <- bme_meqtl_placenta[bme_meqtl_placenta$eGene %in% "cg04373140", ]
+data_cg04373140 <- data_cg04373140[ ,c("eSNPs", "eSNP_pval")]
+colnames(data_cg04373140) <- c("SNP", "P")
+write.table(data_cg04373140, here("02_Data/clumping/placenta-meqtl_filesforclump", "data_cg04373140.txt"), quote = F, row.names = F, col.names=T, sep = "\t")
+```
+
+clump
+```{bash}
+plink --bfile /binder/Linda/Data/ITU/genotypes/QCed_imputed_fullqced_maf_filter/itu_all_qc2_mafiltered --clump /binder/Linda/Processing/P2_Omics_PlacentaTissue/02_Data/clumping/placenta-meqtl_filesforclump/data_cg04373140.txt --clump-r2 0.2 --clump-kb 150 --clump-p1 0.05 --clump-p2 1 --out clump_cg04373140
+
+awk -v cg=cg04373140 'NR != 1 {if($3) print cg " " $3}' clump_cg04373140.clumped >> me-qtl_cis_ind_cpg_snp_associations_cg04373140.txt
+```
+
+```{r}
+missingCpGs1run <- missingCpGs1run[-c(1:2)] # 27,400 now
+```
+
+```{r}
+# I need again the data for these cpgs
+bme_meqtl_placenta_for_clump2 <- bme_meqtl_placenta[bme_meqtl_placenta$eGene %in% missingCpGs1run, ]
+dim(bme_meqtl_placenta_for_clump2) 
+length(unique(unique(bme_meqtl_placenta_for_clump2$eGene)))
+```
+
+```{r}
+write.table(missingCpGs1run, here("02_Data/clumping/placenta-meqtl_filesforclump", "missingCpGs1run.txt"), quote = F, row.names = F, col.names=F, sep = "\t")
+```
+
+```{r}
+write.table(bme_meqtl_placenta_for_clump2, here("02_Data/clumping/placenta-meqtl_filesforclump", "bme_meqtl_placenta_for_clump2.txt"), quote = F, row.names = F, col.names=F, sep = "\t")
+```
+
+get those results we have
+```{r}
+clumped_set2_meqtl_placenta <- merge(bme_meqtl_placenta, clump_meqtls_placenta, by.x=c("eGene", "eSNPs"), by.y=c("CpG", "SNP"))
+```
+
+*manual clumped results*
+
+```{r}
+clump_meqtls_placenta_manual <- read.table(here("02_Data/clumping/placenta-meqtl_filesfromclump", "combined_manual_clump.txt"))
+colnames(clump_meqtls_placenta_manual) <- c("CpG", "SNP")
+```
+
+```{r}
+clumped_set3_meqtl_placenta <- merge(bme_meqtl_placenta, clump_meqtls_placenta_manual, by.x=c("eGene", "eSNPs"), by.y=c("CpG", "SNP"))
+```
+
+*third clumped results*
+expected to have 27,400 unique CpGs with clumping results
+```{r}
+clump_meqtls_placenta2 <- read.table(here("02_Data/clumping/placenta-meqtl_filesfromclump", "combined_secondclumprun.txt"))
+colnames(clump_meqtls_placenta2) <- c("CpG", "SNP")
+```
+
+```{r}
+dim(clump_meqtls_placenta2)
+length(unique(clump_meqtls_placenta2$CpG)) # ok finally!
+```
+
+get those results
+```{r}
+clumped_set4_meqtl_placenta <- merge(bme_meqtl_placenta, clump_meqtls_placenta2, by.x=c("eGene", "eSNPs"), by.y=c("CpG", "SNP"))
+```
+
+*combine clumped results to get final data set*
+```{r}
+bme_meqtl_placenta_clumped <- rbind(clumped_set1_meqtl_placenta, clumped_set2_meqtl_placenta, clumped_set3_meqtl_placenta, clumped_set4_meqtl_placenta)
+```
+
+```{r}
+length(unique(bme_meqtl_placenta_clumped$eGene))
+# ok, this matches with what we now we need (regarding number of unique CpGs! -> 109,846)
+length(unique(bme_meqtl_placenta_clumped$eSNPs))
+dim(bme_meqtl_placenta_clumped)
+```
+
+I noticed that we have some duplicates (rows with exact same entries, I'll remove them)
+```{r}
+bme_meqtl_placenta_clumped <- unique(bme_meqtl_placenta_clumped)
+dim(bme_meqtl_placenta_clumped)
+```
+
+```{r}
+save(bme_meqtl_placenta_clumped, file = here("02_Data/QTL_Data/", "bme_meqtl_placenta_clumped.Rdata"))
+write.table(bme_meqtl_placenta_clumped, file = here("02_Data/QTL_Data/", "bme_meqtl_placenta_clumped.txt"), quote = F, col.names = T, row.names = F, sep = "\t")
+write.csv(bme_meqtl_placenta_clumped, here("02_Data/QTL_Data/", "bme_meqtl_placenta_clumped.cvs"), row.names = FALSE)
+```
+
+## cvs
+
+### read clumped results 
+
+expected to have 52,872 unique CpGs with clumping results, but problems with cluster occuring again
+
+```{r}
+clump_meqtls_cvs <- read.table(here("02_Data/clumping/cvs-meqtl_filesfromclump", "combined_me-qtl_cis_cvs_ind_cpg_snp_associations.txt"))
+colnames(clump_meqtls_cvs) <- c("CpG", "SNP")
+```
+
+```{r}
+dim(clump_meqtls_cvs)
+length(unique(clump_meqtls_cvs$CpG)) # 52872 -> all ok
+```
+
+get those results
+```{r}
+clumped_set_meqtl_cvs <- merge(bme_meqtl_cvs, clump_meqtls_cvs, by.x=c("eGene", "eSNPs"), by.y=c("CpG", "SNP"))
+```
+
+*combine clumped results to get final data set*
+```{r}
+bme_meqtl_cvs_clumped <- rbind(clumped_set1_meqtl_cvs, clumped_set_meqtl_cvs)
+```
+
+```{r}
+length(unique(bme_meqtl_cvs_clumped$eGene))
+# ok, this matches with what we now we need (regarding number of unique CpGs! -> 57,426)
+length(unique(bme_meqtl_cvs_clumped$eSNPs))
+dim(bme_meqtl_cvs_clumped)
+```
+
+to be sure to not have duplicates (rows with exact same entries)
+```{r}
+bme_meqtl_cvs_clumped <- unique(bme_meqtl_cvs_clumped)
+dim(bme_meqtl_cvs_clumped)
+```
+
+```{r}
+save(bme_meqtl_cvs_clumped, file = here("02_Data/QTL_Data/", "bme_meqtl_cvs_clumped.Rdata"))
+write.table(bme_meqtl_cvs_clumped, file = here("02_Data/QTL_Data/", "bme_meqtl_cvs_clumped.txt"), quote = F, col.names = T, row.names = F, sep = "\t")
+write.csv(bme_meqtl_cvs_clumped, here("02_Data/QTL_Data/", "bme_meqtl_cvs_clumped.cvs"), row.names = FALSE)
+```
+
+

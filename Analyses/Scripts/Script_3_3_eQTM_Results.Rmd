@@ -1,0 +1,394 @@
+---
+title: "Basic Results eQTMs from MatrixEQTL and BootstrapQTL"
+author: Linda Dieckmann
+date: November 2022
+output: github_document
+---
+
+In this notebook we take take a look at basic results from MatrixEQTL vs. BootstrapQTL for eQTMs
+
+# load packages
+```{r, warning=FALSE}
+library(here)
+library(MatrixEQTL)
+library(BootstrapQTL)
+library(ggplot2)
+library(dplyr)
+library(cowplot)
+library(scales)
+library(data.table)
+```
+
+If you update package(s) call 
+  renv::snapshot() 
+to save the current picture of the project.
+
+```{r}
+writeLines(capture.output(sessionInfo()), here("Analyses/Scripts/sessionInfos/", "sessionInfo_Script_3_3.txt"))
+```
+
+```{r}
+source(here("Analyses/Scripts/", "functions.R"))
+```
+
+# load data
+input data
+
+<!-- ```{r} -->
+<!-- # eQTM -->
+<!-- load(here("02_Data/prepared", "methylation_M_placenta_filtered_ordered_eqtm.Rdata")) -->
+<!-- load(here("02_Data/prepared", "inv_norm_placenta_tmm_filtered_ordered_eqtm.Rdata")) -->
+<!-- load(here("02_Data/prepared", "methylation_M_cvs_filtered_ordered_eqtm.Rdata")) -->
+<!-- load(here("02_Data/prepared", "inv_norm_cvs_tmm_filtered_ordered_eqtm.Rdata")) -->
+<!-- ``` -->
+
+QTL analyses results
+
+```{r}
+# eQTM
+
+# MatrixEQTL
+load(here("02_Data/MatrixEQTL_Output", "me_eqtm_placenta.Rdata"))
+load(here("02_Data/MatrixEQTL_Output", "me_eqtm_cvs.Rdata"))
+
+# Bootstrap QTL (data frame with results for significant hits)
+load(here("02_Data/MatrixEQTL_Output", "bme_eqtm_placenta.Rdata"))
+load(here("02_Data/MatrixEQTL_Output", "bme_eqtm_cvs.Rdata"))
+```
+
+sample names
+```{r}
+load(here("02_Data/prepared", "common_eqtm_placenta_ids.Rdata"))
+load(here("02_Data/prepared", "common_eqtm_cvs_ids.Rdata"))
+```
+
+gaphunter probes
+```{r}
+gaps_placenta <- read.table(here("02_Data/raw/gaphunter/final_data", "gaphunter_probes_placenta.txt"))
+gaps_cvs <- read.table(here("02_Data/raw/gaphunter/final_data", "gaphunter_probes_cvs.txt"))
+```
+
+gene info
+```{r}
+load(here("02_Data/prepared/", "annotation_genes_placenta_rna.Rdata"))
+load(here("02_Data/prepared/", "annotation_genes_cvs_rna.Rdata"))
+```
+
+# eQTMs
+```{r}
+genes_placenta <- annotation_genes_placenta_rna
+names(genes_placenta) <- c("ENSEMBL", "gene_chromosome", "gene_start_position", "gene_end_position", "HGNC_symbol")
+
+genes_cvs <- annotation_genes_cvs_rna
+names(genes_cvs) <- c("ENSEMBL", "gene_chromosome", "gene_start_position", "gene_end_position", "HGNC_symbol")
+```
+
+## Placenta
+
+### MatrixEQTL
+standard eqtms output (linear model (t-statistic), only cis associations)
+```{r}
+statistics_me_eqtm_placenta_cis <- me_eqtm_placenta$cis$eqtl
+```
+
+we add standard error and r2
+```{r}
+statistics_me_eqtm_placenta_cis$se_beta <- statistics_me_eqtm_placenta_cis$beta / statistics_me_eqtm_placenta_cis$statistic
+```
+
+```{r}
+df_eqtm_placenta <- me_eqtm_placenta$param$dfFull
+r_eqtm_placenta <- statistics_me_eqtm_placenta_cis$statistic / sqrt(df_eqtm_placenta + statistics_me_eqtm_placenta_cis$statistic^2)
+r2_eqtm_placenta <- r_eqtm_placenta ^ 2
+```
+
+```{r}
+statistics_me_eqtm_placenta_cis$r2 <- r2_eqtm_placenta
+```
+
+How many tests were performed?
+```{r}
+me_eqtm_placenta$cis$ntests
+```
+
+How many cis associations with FDR < 0.05 were found with MatrixEQTL?
+```{r}
+statistics_me_eqtm_placenta_cis_fdr5 <- statistics_me_eqtm_placenta_cis[statistics_me_eqtm_placenta_cis$FDR < 0.05, ]
+nrow(statistics_me_eqtm_placenta_cis_fdr5)
+```
+
+How many unique CpGs with FDR < 0.05 were found with MatrixEQTL?
+```{r}
+unique_cpg_names_eqtm_placenta_fdr5_matrix <- unique(statistics_me_eqtm_placenta_cis_fdr5$snps)
+length(unique_cpg_names_eqtm_placenta_fdr5_matrix)
+```
+
+add a column indicating if FDR < 0.05 to the total MatrixEQTL results
+```{r}
+statistics_me_eqtm_placenta_cis$FDRsig <- ifelse(statistics_me_eqtm_placenta_cis$FDR < 0.05, "yes", "no")
+# yes if FDR < 0.05
+```
+
+How many unique genes with FDR < 0.05 were found with Matrixeqtm?
+```{r}
+unique_gene_names_eqtm_placenta_fdr5_matrix <- unique(statistics_me_eqtm_placenta_cis_fdr5$gene)
+length(unique_gene_names_eqtm_placenta_fdr5_matrix)
+```
+
+```{r}
+volcano_plot_matrix(statistics_me_eqtm_placenta_cis, "eqtm placenta MatrixEQTL")
+```
+
+
+### Bootstrap QTL
+How many significant cis associations were found with Bootstrap QTL (global correction p < 0.05)?
+```{r}
+nrow(bme_eqtm_placenta)
+```
+
+How many unique cpgs do we have?
+```{r}
+unique_cpg_names_eqtm_placenta_boot <- unique(bme_eqtm_placenta$eSNPs)
+length(unique_cpg_names_eqtm_placenta_boot)
+```
+
+How many unqiue genes do we have?
+```{r}
+unique_gene_names_eqtm_placenta_boot <- unique(bme_eqtm_placenta$eGene)
+length(unique_gene_names_eqtm_placenta_boot)
+```
+
+```{r}
+volcano_plot_boot(bme_eqtm_placenta, "eqtm placenta BootstrapQTL")
+```
+
+```{r}
+bme_eqtm_placenta$inboot<- "yes"
+# if among the bootstrapqtl results, yes
+```
+
+*combine MatrixEQTL and BootstrapQTL Data*
+```{r}
+eQTMs_placenta_statistics <- merge(bme_eqtm_placenta[,-c(3,4)], statistics_me_eqtm_placenta_cis, all = T, by.x=c("eGene", "eSNPs"), by.y=c("gene", "snps"))
+```
+
+```{r}
+colnames(eQTMs_placenta_statistics) = gsub("SNP", "CpG", colnames(eQTMs_placenta_statistics))
+```
+
+```{r}
+eQTMs_placenta_statistics[c("inboot")][is.na(eQTMs_placenta_statistics[c("inboot")])] <- "no"
+```
+
+add gaphunter probes
+```{r}
+eQTMs_placenta_statistics$gap_probe <- ifelse(eQTMs_placenta_statistics$eCpGs %in% gaps_placenta$V1, "yes", "no")
+```
+
+*add gene info*
+```{r}
+eQTMs_placenta_statistics <- merge(eQTMs_placenta_statistics, genes_placenta, by.x="eGene", by.y="ENSEMBL")
+```
+
+### ODDs
+```{r}
+total_number_tests_placenta <- me_eqtm_placenta$cis$ntests
+number_positive_placenta <- nrow(bme_eqtm_placenta)
+```
+
+### export full eQTM placenta statistic table
+```{r, warning=FALSE}
+#write.csv(eQTMs_placenta_statistics, file = here("Analyses/Results/Descriptive", "eQTMs_placenta_statistics.csv"), row.names = FALSE, col.names = T)
+save(eQTMs_placenta_statistics, file = here("Analyses/Results/Descriptive", "eQTMs_placenta_statistics.Rdata"))
+```
+
+How is the median effect size and r2?
+```{r}
+final_associations_eqtm_placenta <- eQTMs_placenta_statistics[eQTMs_placenta_statistics$inboot == "yes", ]
+summary(final_associations_eqtm_placenta$corrected_beta)
+summary(final_associations_eqtm_placenta$r2)
+```
+
+### histogram plot
+```{r}
+hits_df_eqtms_placenta <- data.frame(c(nrow(statistics_me_eqtm_placenta_cis_fdr5), length(unique_cpg_names_eqtm_placenta_fdr5_matrix), length(unique_gene_names_eqtm_placenta_fdr5_matrix)), c(nrow(bme_eqtm_placenta), length(unique_cpg_names_eqtm_placenta_boot), length(unique_gene_names_eqtm_placenta_boot)))
+
+rownames(hits_df_eqtms_placenta) <- c("cis eQTMs", "unique CpGs", "unique Genes")
+colnames(hits_df_eqtms_placenta) <- c("MatrixEQTL", "BootstrapQTL")
+
+hits_df_eqtms_placenta <- hits_df_eqtms_placenta %>% as.matrix() %>% reshape2::melt(varnames = c("number", "method"), value.name = "cnt")
+```
+
+```{r}
+save(hits_df_eqtms_placenta, file = here("02_Data/MatrixEQTL_Output", "hits_df_eqtms_placenta.Rdata"))
+```
+
+```{r}
+barplot_counts_function(hits_df_eqtms_placenta, "placenta", "BootstrapQTL", colors_placenta_3levels[-3], ylimits=c(0,17600)) 
+```
+
+## cvs
+
+### MatrixEQTL
+standard eqtms output (linear model (t-statistic), only cis associations)
+```{r}
+statistics_me_eqtm_cvs_cis <- me_eqtm_cvs$cis$eqtl
+```
+
+we add standard error and r2
+```{r}
+statistics_me_eqtm_cvs_cis$se_beta <- statistics_me_eqtm_cvs_cis$beta / statistics_me_eqtm_cvs_cis$statistic
+```
+
+```{r}
+df_eqtm_cvs <- me_eqtm_cvs$param$dfFull
+r_eqtm_cvs <- statistics_me_eqtm_cvs_cis$statistic / sqrt(df_eqtm_cvs + statistics_me_eqtm_cvs_cis$statistic^2)
+r2_eqtm_cvs <- r_eqtm_cvs ^ 2
+```
+
+```{r}
+statistics_me_eqtm_cvs_cis$r2 <- r2_eqtm_cvs
+```
+
+How many tests were performed?
+```{r}
+me_eqtm_cvs$cis$ntests
+```
+
+How many cis associations with FDR < 0.05 were found with MatrixEQTL?
+```{r}
+statistics_me_eqtm_cvs_cis_fdr5 <- statistics_me_eqtm_cvs_cis[statistics_me_eqtm_cvs_cis$FDR < 0.05, ]
+nrow(statistics_me_eqtm_cvs_cis_fdr5)
+```
+
+add a column indicating if FDR < 0.05 to the total MatrixEQTL results
+```{r}
+statistics_me_eqtm_cvs_cis$FDRsig <- ifelse(statistics_me_eqtm_cvs_cis$FDR < 0.05, "yes", "no")
+# yes if FDR < 0.05
+```
+
+How many unique CpGs with FDR < 0.05 were found with MatrixEQTL?
+```{r}
+unique_cpg_names_eqtm_cvs_fdr5_matrix <- unique(statistics_me_eqtm_cvs_cis_fdr5$snps)
+length(unique_cpg_names_eqtm_cvs_fdr5_matrix)
+```
+
+How many unique genes with FDR < 0.05 were found with Matrixeqtm?
+```{r}
+unique_gene_names_eqtm_cvs_fdr5_matrix <- unique(statistics_me_eqtm_cvs_cis_fdr5$gene)
+length(unique_gene_names_eqtm_cvs_fdr5_matrix)
+```
+
+```{r}
+volcano_plot_matrix(statistics_me_eqtm_cvs_cis, "eqtm cvs MatrixEQTL")
+```
+
+### Bootstrap QTL
+How many significant cis associations were found with Bootstrap QTL (global correction p < 0.05)?
+```{r}
+nrow(bme_eqtm_cvs)
+```
+
+How many unique cpgs do we have?
+```{r}
+unique_cpg_names_eqtm_cvs_boot <- unique(bme_eqtm_cvs$eSNPs)
+length(unique_cpg_names_eqtm_cvs_boot)
+```
+
+How many unqiue genes do we have?
+```{r}
+unique_gene_names_eqtm_cvs_boot <- unique(bme_eqtm_cvs$eGene)
+length(unique_gene_names_eqtm_cvs_boot)
+```
+
+```{r}
+volcano_plot_boot(bme_eqtm_cvs, "eqtm cvs BootstrapQTL")
+```
+```{r}
+bme_eqtm_cvs$inboot<- "yes"
+# if among the bootstrapqtl results, yes
+```
+
+*combine MatrixEQTL and BootstrapQTL Data*
+```{r}
+eQTMs_cvs_statistics <- merge(bme_eqtm_cvs[,-c(3,4)], statistics_me_eqtm_cvs_cis, all = T, by.x=c("eGene", "eSNPs"), by.y=c("gene", "snps"))
+```
+
+```{r}
+colnames(eQTMs_cvs_statistics) = gsub("SNP", "CpG", colnames(eQTMs_cvs_statistics))
+```
+
+```{r}
+eQTMs_cvs_statistics[c("inboot")][is.na(eQTMs_cvs_statistics[c("inboot")])] <- "no"
+```
+
+add gaphunter probes
+```{r}
+eQTMs_cvs_statistics$gap_probe <- ifelse(eQTMs_cvs_statistics$eCpGs %in% gaps_cvs$V1, "yes", "no")
+```
+
+*add gene info*
+```{r}
+eQTMs_cvs_statistics <- merge(eQTMs_cvs_statistics, genes_cvs, by.x="eGene", by.y="ENSEMBL")
+```
+
+### ODDs
+```{r}
+total_number_tests_cvs <- me_eqtm_cvs$cis$ntests
+number_positive_cvs <- nrow(bme_eqtm_cvs)
+```
+
+### export full eQTM cvs statistic table
+```{r}
+#write.csv(eQTMs_cvs_statistics, file = here("Analyses/Results/Descriptive", "eQTMs_cvs_statistics.csv"), row.names = FALSE)
+save(eQTMs_cvs_statistics, file = here("Analyses/Results/Descriptive", "eQTMs_cvs_statistics.Rdata"))
+```
+
+How is the median effect size and r2?
+```{r}
+final_associations_eqtm_cvs <- eQTMs_cvs_statistics[eQTMs_cvs_statistics$inboot == "yes", ]
+summary(final_associations_eqtm_cvs$corrected_beta)
+summary(final_associations_eqtm_cvs$r2)
+```
+
+### histogram plot
+```{r}
+hits_df_eqtms_cvs <- data.frame(c(nrow(statistics_me_eqtm_cvs_cis_fdr5), length(unique_cpg_names_eqtm_cvs_fdr5_matrix), length(unique_gene_names_eqtm_cvs_fdr5_matrix)), c(nrow(bme_eqtm_cvs), length(unique_cpg_names_eqtm_cvs_boot), length(unique_gene_names_eqtm_cvs_boot)))
+
+rownames(hits_df_eqtms_cvs) <- c("cis eQTMs", "unique CpGs", "unique Genes")
+colnames(hits_df_eqtms_cvs) <- c("MatrixEQTL", "BootstrapQTL")
+
+hits_df_eqtms_cvs <- hits_df_eqtms_cvs %>% as.matrix() %>% reshape2::melt(varnames = c("number", "method"), value.name = "cnt")
+```
+
+```{r}
+save(hits_df_eqtms_cvs, file = here("02_Data/MatrixEQTL_Output", "hits_df_eqtms_cvs.Rdata"))
+```
+
+
+```{r}
+barplot_counts_function(hits_df_eqtms_cvs, "cvs", "BootstrapQTL", colors_cvs_3levels[-3], ylimits=c(0,17600))
+```
+### amount associaitons
+
+```{r}
+number_positive_placenta / total_number_tests_placenta
+number_positive_cvs / total_number_tests_cvs
+```
+
+in placenta, 0.87% of total tests were significant, in cvs 0.003% (290x more in placenta).
+
+# intersection snp-gene pairs
+```{r}
+common_cpg_genes_placenta_cvs <- merge(eQTMs_placenta_statistics[eQTMs_placenta_statistics$inboot == "yes", ], eQTMs_cvs_statistics[eQTMs_cvs_statistics$inboot == "yes", ], by = c("eCpGs", "eGene"))
+colnames(common_cpg_genes_placenta_cvs) <- gsub('.x', '.placenta', colnames(common_cpg_genes_placenta_cvs))
+colnames(common_cpg_genes_placenta_cvs) <- gsub('.y', '.cvs', colnames(common_cpg_genes_placenta_cvs))
+```
+
+```{r}
+head(common_cpg_genes_placenta_cvs)
+```
+```{r}
+save(common_cpg_genes_placenta_cvs, file = here("02_Data/CVS_Placenta/", "common_cpg_genes_placenta_cvs.Rdata"))
+```
+

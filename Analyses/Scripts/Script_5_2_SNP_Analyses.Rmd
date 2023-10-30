@@ -1,0 +1,969 @@
+---
+title: "Placenta-Specific Genes QTLs PheWAS"
+author: Linda Dieckmann
+date: February 2023
+output: github_document
+---
+
+# load packages
+
+```{r}
+library(here)
+library(dplyr)
+library(rlist)
+library(readxl)
+library(ggplot2)
+library(ggforce)
+library(forcats)
+library(cowplot)
+library(ggalluvial)
+library(tidygraph)
+library(ggraph)
+```
+
+GWAS database overview: https://gwas.mrcieu.ac.uk/datasets/
+
+If you update package(s) call 
+  renv::snapshot() 
+to save the current picture of the project.
+
+```{r}
+writeLines(capture.output(sessionInfo()), here("Analyses/Scripts/sessionInfos/", "sessionInfo_Script_5_2.txt"))
+```
+
+```{r}
+source(here("Analyses/Scripts/", "functions.R"))
+```
+
+
+# load data - placenta-specific QTLs
+
+```{r pressure, echo=FALSE}
+load(here("02_Data/Tissue_Specific/","eGenes_placenta_specific_genes_qtls.Rdata"))
+```
+
+# get SNPs infos & format data
+
+*take  a look at eQTLs*
+```{r}
+eQTL_SNPs_eGenes_placenta_specific_genes_qtls <- na.omit(unique(eGenes_placenta_specific_genes_qtls[,c("eSNPs_eQTL","FDR_eQTL", "eGene", "HGNC_symbol", "beta_eQTL", "se_beta_eQTL", "eSNP_pval_eQTL", "eGene_pval_eQTL", "snp_chromosome_eQTL", "snp_position_eQTL", "effect_allele_eQTL", "alternative_allele_eQTL", "eaf_eQTL", "maf_eQTL", "corrected_beta_eQTL", "count_other_studies_eQTL", "cvs_and_placenta_eQTL", "Group")]))
+
+dim(eQTL_SNPs_eGenes_placenta_specific_genes_qtls)
+length(unique(eQTL_SNPs_eGenes_placenta_specific_genes_qtls$eGene))
+length(unique(eQTL_SNPs_eGenes_placenta_specific_genes_qtls$eSNPs_eQTL))
+```
+
+*take a look at meQTLs*
+```{r}
+meQTL_SNPs_eGenes_placenta_specific_genes_qtls <- na.omit(unique(eGenes_placenta_specific_genes_qtls[,c("eSNPs_meQTL","FDR_meQTL", "eGene", "HGNC_symbol", "beta_meQTL", "se_beta_meQTL", "eSNP_pval_meQTL", "eCpG_pval_meQTL", "snp_chromosome_meQTL", "snp_position_meQTL", "effect_allele_meQTL", "alternative_allele_meQTL", "eaf_meQTL", "maf_meQTL", "corrected_beta_meQTL", "eCpG", "cvs_and_placenta_meQTL", "Group")]))
+
+dim(meQTL_SNPs_eGenes_placenta_specific_genes_qtls)
+length(unique(meQTL_SNPs_eGenes_placenta_specific_genes_qtls$eCpG))
+length(unique(meQTL_SNPs_eGenes_placenta_specific_genes_qtls$eSNPs_meQTL))
+length(unique(meQTL_SNPs_eGenes_placenta_specific_genes_qtls$eGene))
+```
+
+we need to add columns where we allow missings
+```{r}
+# add some info
+meQTL_SNPs_eGenes_placenta_specific_genes_qtls <- unique(merge(meQTL_SNPs_eGenes_placenta_specific_genes_qtls, eGenes_placenta_specific_genes_qtls[,c("eSNPs_meQTL","eGene", "eCpG", "count_other_studies_meQTL")], by=c("eSNPs_meQTL","eGene", "eCpG")))
+```
+
+```{r}
+# check everything is ok
+dim(meQTL_SNPs_eGenes_placenta_specific_genes_qtls)
+length(unique(meQTL_SNPs_eGenes_placenta_specific_genes_qtls$eCpG))
+length(unique(meQTL_SNPs_eGenes_placenta_specific_genes_qtls$eSNPs_meQTL))
+length(unique(meQTL_SNPs_eGenes_placenta_specific_genes_qtls$eGene))
+```
+```{r}
+# reorder column order
+meQTL_SNPs_eGenes_placenta_specific_genes_qtls <- meQTL_SNPs_eGenes_placenta_specific_genes_qtls[,c(1, 4, 2, 5:16, 19, 17, 18, 3)]
+```
+
+*both*
+later we need to format our data and only the first instance of duplicated SNPs is kept. We want to make sure that for every SNP we consider the lowest p-value.
+
+first we rearrange data
+```{r}
+e <- eQTL_SNPs_eGenes_placenta_specific_genes_qtls
+names(e) <- c("snp", "fdr", "gene", "gene_symbol", "beta", "se_beta", "esnp_pval", "egene_pval", "snp_chromosome", "snp_position", "effect_allele", "alternative_allele", "eaf", "maf", "corrected_beta", "count_other_studies", "cvs_and_placenta", "group_gene_enrichment")
+e$cpg <- NA
+
+m <- meQTL_SNPs_eGenes_placenta_specific_genes_qtls
+names(m) <-  c("snp", "fdr", "gene", "gene_symbol", "beta", "se_beta", "esnp_pval", "egene_pval", "snp_chromosome", "snp_position", "effect_allele", "alternative_allele", "eaf", "maf", "corrected_beta", "count_other_studies", "cvs_and_placenta", "group_gene_enrichment", "cpg")
+
+snp_pval_eGenes_placenta_specific_genes_qtls <- rbind(e,m) # 670 rows
+```
+
+snp_pval_eGenes_placenta_specific_genes_qtls is the formated data frame where we have only one snp column
+
+```{r}
+cat("We have", nrow(snp_pval_eGenes_placenta_specific_genes_qtls), "associations. ")
+cat("We have", length(unique(snp_pval_eGenes_placenta_specific_genes_qtls$snp)), "unique SNPs in total. ")
+cat("We have", length(unique(snp_pval_eGenes_placenta_specific_genes_qtls$gene)), "genes. ")
+```
+
+columns with cpgs are those that are made by meqtl-eqtm link, the others are eqtl links
+```{r}
+snp_pval_eGenes_placenta_specific_genes_qtls$type <- ifelse(is.na(snp_pval_eGenes_placenta_specific_genes_qtls$cpg), "eQTL", "meQTL")
+```
+
+We save this data frame
+```{r pressure, echo=FALSE}
+save(snp_pval_eGenes_placenta_specific_genes_qtls, file = here("02_Data/Tissue_Specific/","snp_pval_eGenes_placenta_specific_genes_qtls.Rdata"))
+```
+
+
+*take a look at eQTMs*
+```{r}
+eQTM_CpG_eGenes_placenta_specific_genes_qtls <- na.omit(unique(eGenes_placenta_specific_genes_qtls[,c("eCpG","FDR_eQTM", "eGene", "beta_eQTM", "se_beta_eQTM", "eCpG_pval_eQTM", "eGene_pval_eQTM", "corrected_beta_eQTM", "count_other_studies_eQTM", "cvs_and_placenta_eQTM")]))
+```
+
+add info for eQTMs
+```{r}
+qtl_type_info_placenta_specific_genes <- merge(snp_pval_eGenes_placenta_specific_genes_qtls, eQTM_CpG_eGenes_placenta_specific_genes_qtls, by.x=c("gene", "cpg"), by.y=c("eGene", "eCpG"), all.x=T)
+```
+
+We save this data frame
+```{r pressure, echo=FALSE}
+save(qtl_type_info_placenta_specific_genes, file = here("02_Data/Tissue_Specific/","qtl_type_info_placenta_specific_genes.Rdata"))
+```
+
+*prepare SNPs for clump*
+we order by p-value (we don't care if eQTL or meQTL pvalue, but we are fair and want the smallest first)
+```{r}
+snp_pval_eGenes_placenta_specific_genes_qtls_ordered <- snp_pval_eGenes_placenta_specific_genes_qtls %>% 
+  dplyr::arrange(fdr) 
+```
+
+then we remove duplicated snps
+```{r}
+snp_pval_eGenes_placenta_specific_genes_qtls_ordered_distinct <- snp_pval_eGenes_placenta_specific_genes_qtls_ordered[!duplicated(snp_pval_eGenes_placenta_specific_genes_qtls_ordered[,"snp"]),] # keep always only first instance (i.e. lowest p)
+
+dim(snp_pval_eGenes_placenta_specific_genes_qtls_ordered_distinct)
+```
+
+```{r}
+dim(snp_pval_eGenes_placenta_specific_genes_qtls_ordered_distinct[!is.na(snp_pval_eGenes_placenta_specific_genes_qtls_ordered_distinct$cpg), ]) # 440 snps from meqtl-eqtm now
+dim(snp_pval_eGenes_placenta_specific_genes_qtls_ordered_distinct[is.na(snp_pval_eGenes_placenta_specific_genes_qtls_ordered_distinct$cpg), ]) # 37 snps from eqtls now
+```
+
+```{r pressure, echo=FALSE}
+save(snp_pval_eGenes_placenta_specific_genes_qtls_ordered_distinct, file = here("02_Data/Tissue_Specific/","snp_pval_eGenes_placenta_specific_genes_qtls_ordered_distinct.Rdata"))
+# file with unique SNPs and top fdrs for clumping
+```
+
+```{r}
+snps_for_clump <- snp_pval_eGenes_placenta_specific_genes_qtls_ordered_distinct[,c("snp", "fdr")]
+names(snps_for_clump) <- c("SNP", "P")
+```
+
+```{r}
+write.table(snps_for_clump, file = here("02_Data/Tissue_Specific/","snps_for_clump.txt"), quote = F, row.names=F)
+```
+
+# clump SNPs (meQTLs/eQTLs);
+
+*clump using plink*
+note that we use the same parameters as used in PheWAS with 2SMR package
+```{bash}
+# used this on our cluster to clump with plink, detailed
+# plink --bfile /binder/Linda/Data/ITU/genotypes/QCed_imputed_fullqced_maf_filter/itu_all_qc2_mafiltered --clump /binder/Linda/Processing/P2_Omics_PlacentaTissue/02_Data/Tissue_Specific/snps_for_clump.txt --clump-verbose --clump-r2 0.001 --clump-kb 10000 --clump-p1 1 --clump-p2 1 --out /binder/Linda/Processing/P2_Omics_PlacentaTissue/02_Data/Tissue_Specific/snps_from_clump_detailed
+```
+
+```{bash}
+# used this on our cluster to clump with plink, basic
+# plink --bfile /binder/Linda/Data/ITU/genotypes/QCed_imputed_fullqced_maf_filter/itu_all_qc2_mafiltered --clump /binder/Linda/Processing/P2_Omics_PlacentaTissue/02_Data/Tissue_Specific/snps_for_clump.txt --clump-r2 0.001 --clump-kb 10000 --clump-p1 1 --clump-p2 1 --out /binder/Linda/Processing/P2_Omics_PlacentaTissue/02_Data/Tissue_Specific/snps_from_clump
+```
+
+```{r}
+snps_clumped_qtl_placenta_genes_plink <- read.table(file = here("02_Data/Tissue_Specific/","snps_from_clump.clumped"), header = T, fill =T)
+```
+
+
+# GWAS Atlas GWAS extraction 
+https://atlas.ctglab.nl/
+4,756 GWAS
+3,302 Unique Traits
+473 Unique Studies
+28 Domains
+
+*gwas domains*
+From the GWAS atlas page https://atlas.ctglab.nl/traitDB
+we make a table with the number of GWAS in every domain
+```{r}
+gwas_atlas_domains_table <- data.frame(rbind(c("Neurological", 437, "#7FC97F"), c("Metabolic", 1259, "#E6AB02"), c("Psychiatric", 321, "#1B9E77"), c("Skeletal", 194, "#FED9A6"), c("Cardiovascular", 162, "#D95F02"), c("Endocrine", 67, "#F4CAE4"), c("Gastrointestinal", 42, "#B15928"), c("Neoplasms", 49, "#FDC086"), c("Reproduction", 76, "#FBB4AE"), c("Immunological", 365, "#FFFFCC"), c("Respiratory", 74, "#B3CDE3"), c("Cognitive", 78, "#CCEBC5"), c("Ophthalmological", 28, "#DECBE4"), c("Dermatological", 31, "#FDDAEC"), c("Body Structures", 18, "#386CB0"), c("Connective Tissue", 14, "#FB8072"), c("Environment", 69, "#8DD3C7"), c("Activities", 137, "#FFFF99"), c("Mortality", 46, "#D9D9D9"), c("Hematological", 38, "#E5D8BD"), c("Infection", 3, "#F2F2F2"), c("Nutritional", 46, "#E6F5C9"), c("Ear, Nose, Throat", 6, "#FDCDAC"), c("Social Interactions", 20, "#BEAED4"), c("Aging", 5, "#A6761D"), c("Muscular", 5, "#CBD5E8"), c("Cell", 1143, "#FFED6F"), c("Environmental", 23, "#B3E2CD")))
+colnames(gwas_atlas_domains_table) <- c("domain", "number_gwas", "col")
+gwas_atlas_domains_table$number_gwas <- as.numeric(gwas_atlas_domains_table$number_gwas)
+```
+
+```{r}
+save(gwas_atlas_domains_table, file = here("02_Data/PheWAS_GWAS_Atlas/","gwas_atlas_domains_table.Rdata"))
+```
+
+*gwas atlas GWAS per Domains*
+```{r}
+# format for plot
+gwas_atlas_domains_table_for_pie <- gwas_atlas_domains_table %>%
+  arrange(desc(number_gwas)) %>%
+  mutate(end = 2 * pi * cumsum(number_gwas)/sum(number_gwas),
+         start = lag(end, default = 0),
+         middle = 0.5 * (start + end),
+         hjust = ifelse(middle > pi, 1, 0),
+         vjust = ifelse(middle < pi/2 | middle > 3 * pi/2, 0, 1),
+         csum = rev(cumsum(rev(number_gwas))), 
+         pos = number_gwas/2 + lead(csum, 1) ,
+         pos = if_else(is.na(pos), number_gwas/2, pos),
+         prop = number_gwas / sum(number_gwas) *100)
+
+```
+
+```{r}
+gwas_atlas_domains_table_for_pie$domain_plot <- factor(c(gwas_atlas_domains_table_for_pie[1:10, "domain"], rep("", 18)))
+```
+
+Number of GWAS per Domain:
+```{r}
+ggplot(gwas_atlas_domains_table_for_pie) + 
+  geom_arc_bar(aes(x0 = 0, y0 = 0, r0 = 0, r = 1,
+                   start = start, end = end, fill = fct_inorder(col))) +
+  geom_text(aes(x = 1.05 * sin(middle), y = 1.05 * cos(middle), label = domain_plot,
+                hjust = hjust, vjust = vjust)) +
+  geom_text(aes(x = 0.7 * sin(middle), y = 0.75 * cos(middle), label = number_gwas,
+               hjust = hjust, vjust = vjust)) +
+  coord_fixed() +
+  scale_x_continuous(limits = c(-1.5, 1.5),  # Adjust so labels are not cut off
+                     name = "", breaks = NULL, labels = NULL) +
+  scale_y_continuous(limits = c(-1.1, 1.1),    # Adjust so labels are not cut off
+                     name = "", breaks = NULL, labels = NULL)+
+  theme(axis.ticks = element_blank(),
+        axis.title = element_blank(),
+        axis.text.y = element_blank(), 
+        axis.text.x = element_text(size = standard_textsize),
+        legend.position = "none", # Removes the legend
+        panel.background = element_rect(fill = "white")) +
+   scale_fill_manual(values=gwas_atlas_domains_table_for_pie$col)
+
+```
+
+
+```{r}
+ggsave(here("Analyses/Results/PlacentaPheWAS/", "prop_pie_plot_gwas_atlas_domains.pdf"),
+prop_pie_plot_gwas_atlas_domains, width=standard_width_mm_single, height=standard_height_mm/4, units="mm", dpi=600, scale=2, device = cairo_pdf)
+```
+
+# GWAS atlas PheWAS for the SNPs clumped with plink 
+69 SNPs after clumping, 
+-> used website
+
+```{r}
+# add the snps we actually used (proxy if index was not found)
+snps_clumped_qtl_placenta_genes_plink$snp_used <- 
+  c("rs2665836", "rs10022142", "rs2061742", "rs1676008", "rs7250849", 
+    "rs17235716", "rs7026304", "rs2373927", "rs17608", "rs4304541",
+    "rs2634162", "rs56778934", "rs1737028", "rs11647799", "rs6449613",
+    "rs1365837", "rs6936834", "rs60630053", "rs201895288", "rs17041839",
+    "rs11229030", "rs786120", "rs12460842", "rs12760895", "rs11897585",
+    "rs8039796", "rs9376801", "rs10106085", "rs6589953", "rs2855039",
+    "rs1061407", "rs9359730", "rs6940344", "rs73232757", "rs229535", 
+    "rs12092152", "rs724508", "rs112585717", "rs112218381", "rs882904",
+    "rs11244843", "rs10246021", "rs1916021", "rs4234017", "rs3826425",
+    NA, "rs34952159", "rs2215552", "rs59407181", "rs2102303", 
+    "rs4796664", "rs34416854", "rs12204825","rs5882838", "rs6885155", 
+    "rs6571218", "rs11659550", "rs1042886", "rs12116457", "rs72761048", 
+    "rs879104", "rs12669749", 	"rs11291975", "rs2832903", "rs4705305", 
+    "rs7544253", "rs3848563", "rs115564938", "rs78816499")
+```
+note: if we cannot find the index snp, we look in the verbose clumped file for another SNP that has highest r2 value and is present in the gwas atlas
+
+```{r}
+setdiff(snps_clumped_qtl_placenta_genes_plink$SNP, snps_clumped_qtl_placenta_genes_plink$snp_used)
+```
+
+if NA, then no proxy SNP was available
+--> We used 68 SNPs
+
+```{r}
+save(snps_clumped_qtl_placenta_genes_plink, file = here("02_Data/PheWAS_GWAS_Atlas/","snps_clumped_qtl_placenta_genes_plink.Rdata"))
+```
+
+*Type of SNPs regarding QTLs*
+```{r}
+load(here("02_Data/PheWAS_GWAS_Atlas/","snps_clumped_qtl_placenta_genes_plink.Rdata"))
+```
+
+get our clumped SNPs in the full data
+```{r}
+# delete row where we have missing snp
+complete_snps_clumped_qtl_placenta_genes_plink <- na.omit(snps_clumped_qtl_placenta_genes_plink)
+```
+
+```{r}
+esnps_clumped_eGenes_placenta <- eGenes_placenta_specific_genes_qtls[eGenes_placenta_specific_genes_qtls$eSNPs_eQTL %in% complete_snps_clumped_qtl_placenta_genes_plink$SNP, ]
+mesnps_clumped_eGenes_placenta <- eGenes_placenta_specific_genes_qtls[eGenes_placenta_specific_genes_qtls$eSNPs_meQTL %in% complete_snps_clumped_qtl_placenta_genes_plink$SNP, ]
+```
+
+```{r}
+cat("We have", nrow(esnps_clumped_eGenes_placenta), "eQTL associations among the placenta clumped SNPs. ")
+cat("We have", length(unique(esnps_clumped_eGenes_placenta$eSNPs_eQTL)), "uniaue eQTL SNPs. ")
+cat("We have", length(unique(esnps_clumped_eGenes_placenta$eGene)), "uniaue eQTL Genes. ")
+```
+```{r}
+cat("We have", nrow(mesnps_clumped_eGenes_placenta), "meQTL associations among the placenta clumped SNPs. ")
+cat("We have", length(unique(mesnps_clumped_eGenes_placenta$eSNPs_meQTL)), "uniaue meQTL SNPs. ")
+cat("We have", length(unique(mesnps_clumped_eGenes_placenta$eGene)), "uniaue meQTL Genes. ")
+```
+
+```{r}
+cat(length(intersect(esnps_clumped_eGenes_placenta$eSNPs_eQTL, mesnps_clumped_eGenes_placenta$eSNPs_meQTL)), "SNPs are both eQTL and meQTL. ")
+cat(length(intersect(esnps_clumped_eGenes_placenta$eGene, mesnps_clumped_eGenes_placenta$eGene)), "Genes are both eQTL and meQTL")
+```
+-> Note that this refers only to the clumped SNPs we used here. It could still be that a eGene has another meQTL SNP, but this was no association we considered among our clumped data here.
+
+
+```{r}
+cat((7/68)*100, "% are eQTL SNPs.")
+cat((61/68)*100, "% are meQTL SNPs. ")
+```
+```{r}
+cat((8/134)*100, "% are eQTL associations.")
+cat((126/134)*100, "% are meQTL associations. ")
+```
+
+*PheWAS results*
+```{r}
+gwas_atlas_folder <- here("02_Data/PheWAS_GWAS_Atlas/plink_clumped_eqtl_meqtl_placenta_specific_snps_gwas_atlas_phewas/")
+gwas_atlas_file_names <- list.files(path = gwas_atlas_folder, pattern = "*.csv")
+```
+
+```{r}
+setwd(gwas_atlas_folder)
+
+gwas_atlas_outcome_list <- lapply(gwas_atlas_file_names, function(file.name)
+                              {df <- read.csv(file.name)
+                              df$file.name <- file.name
+                              return(df)
+                               })
+```
+       
+```{r}
+gwas_atlas_outcome_snps_clumped_qtl_placenta_genes <- list.rbind(gwas_atlas_outcome_list)
+```
+
+```{r}
+gwas_atlas_outcome_snps_clumped_qtl_placenta_genes$snp <- gsub(".csv","", gwas_atlas_outcome_snps_clumped_qtl_placenta_genes$file.name)
+```
+
+```{r}
+gwas_atlas_outcome_snps_clumped_qtl_placenta_genes <- merge(gwas_atlas_outcome_snps_clumped_qtl_placenta_genes, complete_snps_clumped_qtl_placenta_genes_plink[,c("SNP", "snp_used")], by.x="snp", by.y="snp_used")
+names(gwas_atlas_outcome_snps_clumped_qtl_placenta_genes)[names(gwas_atlas_outcome_snps_clumped_qtl_placenta_genes) == 'SNP'] <- 'snp_original'
+names(gwas_atlas_outcome_snps_clumped_qtl_placenta_genes)[names(gwas_atlas_outcome_snps_clumped_qtl_placenta_genes) == 'snp'] <- 'snp_phewas'
+```
+
+```{r}
+gwas_atlas_outcome_snps_clumped_qtl_placenta_genes$fdr <- p.adjust(gwas_atlas_outcome_snps_clumped_qtl_placenta_genes$P.value, method = "BH", n = (4756*68)) 
+length(which(na.omit(gwas_atlas_outcome_snps_clumped_qtl_placenta_genes$fdr < 0.05)))
+```
+
+```{r}
+gwas_atlas_outcome_snps_clumped_qtl_placenta_genes$p_bonferroni <- p.adjust(gwas_atlas_outcome_snps_clumped_qtl_placenta_genes$P.value, method = "bonferroni", n = (4756*68)) 
+length(which(na.omit(gwas_atlas_outcome_snps_clumped_qtl_placenta_genes$p_bonferroni < 0.05)))
+```
+
+## significant outcomes after bonferroni correction
+```{r}
+gwas_atlas_outcome_snps_clumped_qtl_placenta_genes_sig <- gwas_atlas_outcome_snps_clumped_qtl_placenta_genes[gwas_atlas_outcome_snps_clumped_qtl_placenta_genes$p_bonferroni < 0.05, ]
+```
+
+```{r}
+head(gwas_atlas_outcome_snps_clumped_qtl_placenta_genes_sig)
+```
+```{r}
+# delete fdr column to avoid confusion
+gwas_atlas_outcome_snps_clumped_qtl_placenta_genes_sig$fdr <- NULL
+```
+
+```{r}
+length(unique(gwas_atlas_outcome_snps_clumped_qtl_placenta_genes_sig$Trait))
+length(unique(gwas_atlas_outcome_snps_clumped_qtl_placenta_genes_sig$snp_original))
+length(unique(gwas_atlas_outcome_snps_clumped_qtl_placenta_genes_sig$Domain))
+```
+
+```{r}
+# sort by domain
+gwas_atlas_outcome_snps_clumped_qtl_placenta_genes_sig <- gwas_atlas_outcome_snps_clumped_qtl_placenta_genes_sig[order(gwas_atlas_outcome_snps_clumped_qtl_placenta_genes_sig$Domain),]
+```
+
+```{r}
+gwas_atlas_outcome_snps_clumped_qtl_placenta_genes_sig$file.name <- NULL
+```
+
+Sometimes there are 'duplicated' entries: the same PMID for the same trait with different N (and Pvalue)
+```{r}
+gwas_atlas_outcome_snps_clumped_qtl_placenta_genes_sig %>% 
+  add_rownames %>% 
+  group_by_at(vars(snp_phewas, PMID, Trait)) %>% filter(n()>1) %>% ungroup()
+```
+Ok, we have 4 cases where this happens
+```{r}
+# we want to delete those with smaller n:
+index_row <- c(7991, 3441, 3447, 3445)
+```
+
+```{r}
+gwas_atlas_outcome_snps_clumped_qtl_placenta_genes_sig <- gwas_atlas_outcome_snps_clumped_qtl_placenta_genes_sig[!rownames(gwas_atlas_outcome_snps_clumped_qtl_placenta_genes_sig) %in% index_row, ]
+```
+
+```{r}
+save(gwas_atlas_outcome_snps_clumped_qtl_placenta_genes, file = here("02_Data/PheWAS_GWAS_Atlas/","gwas_atlas_outcome_snps_clumped_qtl_placenta_genes.Rdata"))
+save(gwas_atlas_outcome_snps_clumped_qtl_placenta_genes_sig, file = here("02_Data/PheWAS_GWAS_Atlas/","gwas_atlas_outcome_snps_clumped_qtl_placenta_genes_sig.Rdata"))
+write.csv(gwas_atlas_outcome_snps_clumped_qtl_placenta_genes_sig, file=here("Analyses/Results/PlacentaPheWAS", "gwas_atlas_outcome_snps_clumped_qtl_placenta_genes_sig.csv"), row.names = FALSE)
+```
+
+*get a list of traits per domain*
+Sometimes the traits are just different by the type of meta-analysis used etc... We change this to the same trait
+```{r}
+gwas_atlas_outcome_snps_clumped_qtl_placenta_genes_sig_c <- gwas_atlas_outcome_snps_clumped_qtl_placenta_genes_sig
+gwas_atlas_outcome_snps_clumped_qtl_placenta_genes_sig_c$trait <- gsub("\\s*\\([^\\)]+\\)", "", gwas_atlas_outcome_snps_clumped_qtl_placenta_genes_sig_c$Trait)
+length(unique(gwas_atlas_outcome_snps_clumped_qtl_placenta_genes_sig_c$trait))
+gwas_atlas_outcome_snps_clumped_qtl_placenta_genes_sig_c$Trait <- NULL
+gwas_atlas_outcome_snps_clumped_qtl_placenta_genes_sig_c <- unique(gwas_atlas_outcome_snps_clumped_qtl_placenta_genes_sig_c)
+length(unique(gwas_atlas_outcome_snps_clumped_qtl_placenta_genes_sig_c$Domain))
+```
+
+```{r}
+table_domain_trait <- gwas_atlas_outcome_snps_clumped_qtl_placenta_genes_sig_c %>%
+  group_by(Domain) %>%
+  reframe(unique(trait))
+```
+
+```{r}
+colnames(table_domain_trait) <- c("Domain", "GWAS Trait")
+```
+
+```{r}
+write_xlsx(table_domain_trait, here("Analyses/Results/PlacentaPheWAS", "table_domain_trait_sig.xlsx"))
+```
+
+
+## outcome categories / domains
+```{r}
+load(here("02_Data/PheWAS_GWAS_Atlas/","gwas_atlas_domains_table.Rdata"))
+```
+
+```{r}
+table_domains_outcomes_phewas <- data.frame(table(gwas_atlas_outcome_snps_clumped_qtl_placenta_genes_sig$Domain))
+colnames(table_domains_outcomes_phewas) <- c("domain", "freq")
+table_domains_outcomes_phewas$domain <- as.character(table_domains_outcomes_phewas$domain)
+```
+
+```{r}
+# add missing domains
+setdiff(gwas_atlas_domains_table$domain ,table_domains_outcomes_phewas$domain)
+```
+```{r}
+table_domains_outcomes_phewas <- data.frame(rbind(table_domains_outcomes_phewas,c("Endocrine", 0), c("Neoplasms", 0), c("Cognitive", 0), c("Activities", 0), c("Mortality", 0), c("Hematological", 0),c("Social Interactions", 0), c("Body Structures", 0), c("Ear, Nose, Throat", 0), c("Aging", 0), c("Muscular", 0), c("Infection", 0)))
+table_domains_outcomes_phewas$freq <- as.numeric(table_domains_outcomes_phewas$freq)
+```
+
+adpat colors in our data:
+```{r}
+table_domains_outcomes_phewas <- merge(table_domains_outcomes_phewas, gwas_atlas_domains_table[,c("domain", "col")], by = "domain")
+```
+
+```{r}
+save(table_domains_outcomes_phewas, file = here("02_Data/PheWAS_GWAS_Atlas/","table_domains_outcomes_phewas.Rdata"))
+```
+
+```{r}
+# format for plot
+table_domains_outcomes_phewas_for_pie <- table_domains_outcomes_phewas %>%
+  arrange(desc(freq)) %>%
+  mutate(end = 2 * pi * cumsum(freq)/sum(freq),
+         start = lag(end, default = 0),
+         middle = 0.5 * (start + end),
+         hjust = ifelse(middle > pi, 1, 0),
+         vjust = ifelse(middle < pi/2 | middle > 3 * pi/2, 0, 1),
+         csum = rev(cumsum(rev(freq))), 
+         pos = freq/2 + lead(csum, 1) ,
+         pos = if_else(is.na(pos), freq/2, pos),
+         prop = freq / sum(freq) *100)
+```
+
+```{r}
+table_domains_outcomes_phewas_for_pie$domain_plot <- factor(c(table_domains_outcomes_phewas_for_pie[1:10, "domain"], rep("", 18)))
+```
+
+our plot:
+```{r}
+ggplot(table_domains_outcomes_phewas_for_pie) + 
+  geom_arc_bar(aes(x0 = 0, y0 = 0, r0 = 0, r = 1,
+                   start = start, end = end, fill = fct_inorder(col))) +
+  geom_text(aes(x = 1.05 * sin(middle), y = 1.05 * cos(middle), label = domain_plot,
+                hjust = hjust, vjust = vjust)) +
+  geom_text(aes(x = 0.7 * sin(middle), y = 0.75 * cos(middle), label = freq,
+                hjust = hjust, vjust = vjust)) +
+  coord_fixed() +
+  scale_x_continuous(limits = c(-1.5, 1.5),  # Adjust so labels are not cut off
+                     name = "", breaks = NULL, labels = NULL) +
+  scale_y_continuous(limits = c(-1.1, 1.1),    # Adjust so labels are not cut off
+                     name = "", breaks = NULL, labels = NULL)+
+  theme(axis.ticks = element_blank(),
+        axis.title = element_blank(),
+        axis.text.y = element_blank(), 
+        axis.text.x = element_text(size = standard_textsize),
+        legend.position = "none", # Removes the legend
+        panel.background = element_rect(fill = "white"))+
+   scale_fill_manual(values=table_domains_outcomes_phewas_for_pie$col)
+
+```
+
+## 2 proportions z test
+to compare the distribution between our outcomes and the overall amount of outcomes in gwas atlas
+
+```{r}
+View(gwas_atlas_domains_table)
+View(table_domains_outcomes_phewas)
+```
+
+p.ours
+ is the proportion observed in our data with size n.ours
+p.atlas
+ is the proportion observed in the gwas atlas with size n.atlas
+
+*Immunological*
+```{r}
+p.ours_immunological <- table_domains_outcomes_phewas[table_domains_outcomes_phewas$domain == "Immunological", "freq"]
+n.ours_immunological <- sum(table_domains_outcomes_phewas$freq)
+p.atlas_immunological <- gwas_atlas_domains_table[gwas_atlas_domains_table$domain == "Immunological", "number_gwas"]
+n.atlas_immunological <- sum(gwas_atlas_domains_table$number_gwas)
+```
+
+We want to test if the observed proportion of a category in our data is greater than the observed proportion of the category in gwas atlas
+we use the
+
+```{r}
+prop.test(x = c(p.ours_immunological, p.atlas_immunological), n = c(n.ours_immunological, n.atlas_immunological), alternative = "greater")
+```
+
+*Skeletal*
+```{r}
+p.ours_skeletal <- table_domains_outcomes_phewas[table_domains_outcomes_phewas$domain == "Skeletal", "freq"]
+n.ours_skeletal <- sum(table_domains_outcomes_phewas$freq)
+p.atlas_skeletal <- gwas_atlas_domains_table[gwas_atlas_domains_table$domain == "Skeletal", "number_gwas"]
+n.atlas_skeletal <- sum(gwas_atlas_domains_table$number_gwas)
+```
+
+We want to test if the observed proportion of a category in our data is greater than the observed proportion of the category in gwas atlas
+we use the
+
+```{r}
+prop.test(x = c(p.ours_skeletal, p.atlas_skeletal), n = c(n.ours_skeletal, n.atlas_skeletal), alternative = "greater")
+```
+
+*Metabolic*
+```{r}
+p.ours_metabolic <- table_domains_outcomes_phewas[table_domains_outcomes_phewas$domain == "Metabolic", "freq"]
+n.ours_metabolic <- sum(table_domains_outcomes_phewas$freq)
+p.atlas_metabolic <- gwas_atlas_domains_table[gwas_atlas_domains_table$domain == "Metabolic", "number_gwas"]
+n.atlas_metabolic <- sum(gwas_atlas_domains_table$number_gwas)
+```
+
+We want to test if the observed proportion of a category in our data is greater than the observed proportion of the category in gwas atlas
+we use the
+
+```{r}
+prop.test(x = c(p.ours_metabolic, p.atlas_metabolic), n = c(n.ours_metabolic, n.atlas_metabolic), alternative = "greater")
+```
+
+*Respiratory*
+```{r}
+p.ours_respiratory <- table_domains_outcomes_phewas[table_domains_outcomes_phewas$domain == "Respiratory", "freq"]
+n.ours_respiratory <- sum(table_domains_outcomes_phewas$freq)
+p.atlas_respiratory <- gwas_atlas_domains_table[gwas_atlas_domains_table$domain == "Respiratory", "number_gwas"]
+n.atlas_respiratory <- sum(gwas_atlas_domains_table$number_gwas)
+```
+
+```{r}
+prop.test(x = c(p.ours_respiratory, p.atlas_respiratory), n = c(n.ours_respiratory, n.atlas_respiratory), alternative = "greater")
+```
+*Psychiatric*
+```{r}
+p.ours_psychiatric <- table_domains_outcomes_phewas[table_domains_outcomes_phewas$domain == "Psychiatric", "freq"]
+n.ours_psychiatric <- sum(table_domains_outcomes_phewas$freq)
+p.atlas_psychiatric <- gwas_atlas_domains_table[gwas_atlas_domains_table$domain == "Psychiatric", "number_gwas"]
+n.atlas_psychiatric <- sum(gwas_atlas_domains_table$number_gwas)
+```
+
+```{r}
+prop.test(x = c(p.ours_psychiatric, p.atlas_psychiatric), n = c(n.ours_psychiatric, n.atlas_psychiatric), alternative = "greater")
+```
+
+*neurological*
+```{r}
+p.ours_neurological <- table_domains_outcomes_phewas[table_domains_outcomes_phewas$domain == "Neurological", "freq"]
+n.ours_neurological <- sum(table_domains_outcomes_phewas$freq)
+p.atlas_neurological <- gwas_atlas_domains_table[gwas_atlas_domains_table$domain == "Neurological", "number_gwas"]
+n.atlas_neurological <- sum(gwas_atlas_domains_table$number_gwas)
+```
+
+```{r}
+prop.test(x = c(p.ours_neurological, p.atlas_neurological), n = c(n.ours_neurological, n.atlas_neurological), alternative = "greater")
+```
+
+# Plot our vs. atlas results
+```{r}
+load(here("02_Data/PheWAS_GWAS_Atlas/","gwas_atlas_domains_table.Rdata"))
+load(here("02_Data/PheWAS_GWAS_Atlas/","table_domains_outcomes_phewas.Rdata"))
+```
+
+```{r}
+gwas_atlas_domains_table$prop <- gwas_atlas_domains_table$number_gwas / sum(gwas_atlas_domains_table$number_gwas) * 100
+table_domains_outcomes_phewas$prop <- table_domains_outcomes_phewas$freq / sum(table_domains_outcomes_phewas$freq) * 100
+```
+
+```{r}
+sort_domains <- table_domains_outcomes_phewas %>% arrange(desc(prop))
+```
+
+```{r}
+domain_prop_table <- merge(gwas_atlas_domains_table[,c("domain", "col", "prop")], table_domains_outcomes_phewas[,c("domain", "col", "prop")], by = c("domain", "col"), all = T, suffixes = c(".atlas", ".omics"))
+
+domain_prop_table_melted <- melt(domain_prop_table)
+```
+
+```{r}
+domain_prop_table_melted$domain_sort <- factor(domain_prop_table_melted$domain,levels = sort_domains$domain)
+domain_prop_table_melted$variable <- relevel(domain_prop_table_melted$variable, "prop.omics")
+```
+
+```{r}
+lila_color1 <- desatcolor("#882255", 0.4)
+lila_color2 <- desatcolor("#AA4499", 0.6)
+```
+
+
+```{r}
+prop_hits_phewas_plot <- 
+   ggplot(domain_prop_table_melted, aes(x = domain_sort, y= value, fill = variable)) +
+   geom_bar(stat="identity", width=.8, position = "dodge") + 
+  labs(x = "", y="proportion of GWAS in domain") +
+  scale_fill_manual(labels = c("PheWAS Hits", "GWAS Atlas"), values = c(lighten(lila_color1, 0.1), lighten(lila_color2, 0.2))) +
+  scale_y_continuous(limits = c(0, 46), breaks = seq(0,45, by = 5), labels = function(x) paste0(x, "%")) +
+  theme_classic()+
+  theme(plot.title = element_text(family = "Helvetica",size = standard_textsize), 
+        axis.title = element_text(family = "Helvetica",size = standard_textsize), 
+        axis.text = element_text(family = "Helvetica",size = standard_textsize), 
+        legend.text = element_text(family = "Helvetica",size = standard_textsize), 
+        axis.text.x = element_text(family = "Helvetica",size = standard_textsize, angle = 45, vjust = 1, hjust=1), 
+        legend.title = element_blank(), 
+        legend.position = "bottom", 
+        plot.margin = unit(c(0.1,0.1,0.1,0.5), "cm"))
+
+prop_hits_phewas_plot
+```
+
+
+```{r}
+ggsave(here("Analyses/Results/PlacentaPheWAS/", "prop_hits_phewas_plot.png"),
+prop_hits_phewas_plot, width=standard_width_mm_single, height=standard_height_mm/3, units="mm", dpi=300, scale=2)
+```
+
+## merge phewas outcome list with our qtl information
+```{r}
+load(here("02_Data/PheWAS_GWAS_Atlas/","gwas_atlas_outcome_snps_clumped_qtl_placenta_genes_sig.Rdata")) # our significant phewas results
+load(here("02_Data/Tissue_Specific/","qtl_type_info_placenta_specific_genes.Rdata")) # our qtl info for the placenta-specific genes
+```
+
+```{r}
+names(gwas_atlas_outcome_snps_clumped_qtl_placenta_genes_sig)[names(gwas_atlas_outcome_snps_clumped_qtl_placenta_genes_sig) == 'p_bonferroni'] <- 'p_corrected_outcome'
+names(qtl_type_info_placenta_specific_genes)[names(qtl_type_info_placenta_specific_genes) == 'fdr'] <- 'fdr_qtl'
+
+qtls_placenta_genes_phewas_outcomes <- merge(gwas_atlas_outcome_snps_clumped_qtl_placenta_genes_sig, qtl_type_info_placenta_specific_genes, by.x="snp_original", by.y="snp")
+dim(qtls_placenta_genes_phewas_outcomes)
+```
+
+```{r}
+# just some formatting
+names(qtls_placenta_genes_phewas_outcomes)[names(qtls_placenta_genes_phewas_outcomes) == 'atlas.ID'] <- 'atlas_id'
+names(qtls_placenta_genes_phewas_outcomes)[names(qtls_placenta_genes_phewas_outcomes) == 'PMID'] <- 'pmid'
+names(qtls_placenta_genes_phewas_outcomes)[names(qtls_placenta_genes_phewas_outcomes) == 'Year'] <- 'year'
+names(qtls_placenta_genes_phewas_outcomes)[names(qtls_placenta_genes_phewas_outcomes) == 'Domain'] <- 'domain'
+names(qtls_placenta_genes_phewas_outcomes)[names(qtls_placenta_genes_phewas_outcomes) == 'Trait'] <- 'trait'
+names(qtls_placenta_genes_phewas_outcomes)[names(qtls_placenta_genes_phewas_outcomes) == 'P.value'] <- 'p.value'
+names(qtls_placenta_genes_phewas_outcomes)[names(qtls_placenta_genes_phewas_outcomes) == 'EA'] <- 'effect_allele_gwas'
+names(qtls_placenta_genes_phewas_outcomes)[names(qtls_placenta_genes_phewas_outcomes) == 'NEA'] <- 'non_effect_allele_gwas'
+names(qtls_placenta_genes_phewas_outcomes)[names(qtls_placenta_genes_phewas_outcomes) == 'egene_pval'] <- 'e_pval'
+names(qtls_placenta_genes_phewas_outcomes)[names(qtls_placenta_genes_phewas_outcomes) == 'FDR_eQTM'] <- 'fdr_eqtm'
+names(qtls_placenta_genes_phewas_outcomes)[names(qtls_placenta_genes_phewas_outcomes) == 'beta_eQTM'] <- 'beta_eqtm'
+names(qtls_placenta_genes_phewas_outcomes)[names(qtls_placenta_genes_phewas_outcomes) == 'se_beta_eQTM'] <- 'se_beta_eqtm'
+names(qtls_placenta_genes_phewas_outcomes)[names(qtls_placenta_genes_phewas_outcomes) == 'eCpG_pval_eQTM'] <- 'ecpg_pval_eqtm'
+names(qtls_placenta_genes_phewas_outcomes)[names(qtls_placenta_genes_phewas_outcomes) == 'eGene_pval_eQTM'] <- 'egene_pval_eqtm'
+names(qtls_placenta_genes_phewas_outcomes)[names(qtls_placenta_genes_phewas_outcomes) == 'corrected_beta_eQTM'] <- 'corrected_beta_eqtm'
+names(qtls_placenta_genes_phewas_outcomes)[names(qtls_placenta_genes_phewas_outcomes) == 'count_other_studies_eQTM'] <- 'count_other_studies_eqtm'
+names(qtls_placenta_genes_phewas_outcomes)[names(qtls_placenta_genes_phewas_outcomes) == 'cvs_and_placenta_eQTM'] <- 'cvs_and_placenta_eqtm'
+```
+
+```{r}
+gene_snp_pairs <- qtls_placenta_genes_phewas_outcomes[,c("snp_original", "gene")]
+unique_gene_snp_pairs <- unique(gene_snp_pairs)
+nrow(unique_gene_snp_pairs)
+```
+24 unique gene-snp combinations
+
+```{r}
+length(unique(qtls_placenta_genes_phewas_outcomes$snp_original))
+length(unique(qtls_placenta_genes_phewas_outcomes$gene))
+length(unique(qtls_placenta_genes_phewas_outcomes$cpg))
+```
+
+add some location info
+```{r}
+load(here("02_Data/prepared/", "annotation_placenta_meth.Rdata")) 
+load(here("02_Data/prepared/", "annotation_genes_placenta_rna.Rdata"))
+```
+
+```{r}
+cpgs_infos <- annotation_placenta_meth[,c("chr", "pos", "strand", "Name")]
+colnames(cpgs_infos) <- c("cpg_chromosome", "cpg_position", "cpg_strand", "cpg_name")
+```
+```{r}
+gene_infos <- annotation_genes_placenta_rna
+colnames(gene_infos) <- c("gene", "gene_chromosome", "gene_start_position", "gene_end_position", "hgnc_symbol")
+```
+
+```{r}
+qtls_placenta_genes_phewas_outcomes <- merge(qtls_placenta_genes_phewas_outcomes, cpgs_infos, by.x="cpg", by.y="cpg_name", all.x=T)
+qtls_placenta_genes_phewas_outcomes <- merge(qtls_placenta_genes_phewas_outcomes, gene_infos, by.x=c("gene","gene_symbol"), by.y=c("gene", "hgnc_symbol"), all.x=T)
+```
+
+```{r}
+write.csv(qtls_placenta_genes_phewas_outcomes, file=here("Analyses/Results/PlacentaPheWAS", "qtls_placenta_genes_phewas_outcomes.csv"), row.names = FALSE)
+save(qtls_placenta_genes_phewas_outcomes, file = here("02_Data/PheWAS_GWAS_Atlas/","qtls_placenta_genes_phewas_outcomes.Rdata"))
+```
+
+```{r}
+eqtls_placenta_genes_phewas_outcomes <- qtls_placenta_genes_phewas_outcomes[qtls_placenta_genes_phewas_outcomes$type == "eQTL", ]
+cat("We have", nrow(qtls_placenta_genes_phewas_outcomes[qtls_placenta_genes_phewas_outcomes$type == "eQTL", ]), "eQTL associations among the placenta clumped SNPs. ")
+cat("We have", length(unique(qtls_placenta_genes_phewas_outcomes[qtls_placenta_genes_phewas_outcomes$type == "eQTL", "snp_original"])), "uniaue eQTL SNPs. ")
+unique_eqtl_snps_phewas <- unique(qtls_placenta_genes_phewas_outcomes[qtls_placenta_genes_phewas_outcomes$type == "eQTL", "snp_original"])
+unique_eqtl_genes_phewas <- unique(qtls_placenta_genes_phewas_outcomes[qtls_placenta_genes_phewas_outcomes$type == "eQTL", "gene"])
+```
+
+```{r}
+meqtls_placenta_genes_phewas_outcomes <- qtls_placenta_genes_phewas_outcomes[qtls_placenta_genes_phewas_outcomes$type == "meQTL", ]
+cat("We have", nrow(qtls_placenta_genes_phewas_outcomes[qtls_placenta_genes_phewas_outcomes$type == "meQTL", ]), "meQTL associations among the placenta clumped SNPs. ")
+cat("We have", length(unique(qtls_placenta_genes_phewas_outcomes[qtls_placenta_genes_phewas_outcomes$type == "meQTL", "snp_original"])), "uniaue meQTL SNPs. ")
+unique_meqtl_snps_phewas <- unique(qtls_placenta_genes_phewas_outcomes[qtls_placenta_genes_phewas_outcomes$type == "meQTL", "snp_original"])
+unique_meqtl_genes_phewas <- unique(qtls_placenta_genes_phewas_outcomes[qtls_placenta_genes_phewas_outcomes$type == "meQTL", "gene"])
+```
+
+```{r}
+cat((5/23)*100, "% are eQTL SNPs.")
+cat((18/23)*100, "% are meQTL SNPs. ")
+```
+
+```{r}
+intersect(unique_eqtl_snps_phewas, unique_meqtl_snps_phewas)
+# no overlap eQTL and meQTL(eQTM) snps
+intersect(unique_eqtl_genes_phewas, unique_meqtl_genes_phewas)
+# no overlap eQTL and meQTL(eQTM) genes
+```
+
+*further prepare data*
+```{r}
+load(here("02_Data/PheWAS_GWAS_Atlas/","qtls_placenta_genes_phewas_outcomes.Rdata"))
+```
+
+Sometimes the traits are just different by the type of meta-analysis used etc... We change this to the same trait
+```{r}
+qtls_placenta_genes_phewas_outcomes_c <- qtls_placenta_genes_phewas_outcomes
+qtls_placenta_genes_phewas_outcomes_c$trait <- gsub("\\s*\\([^\\)]+\\)", "", qtls_placenta_genes_phewas_outcomes_c$trait)
+qtls_placenta_genes_phewas_outcomes_c <- unique(qtls_placenta_genes_phewas_outcomes_c)
+```
+
+```{r}
+snpsplit_qtls_placenta_genes_phewas_outcomes_c <- split(qtls_placenta_genes_phewas_outcomes_c, qtls_placenta_genes_phewas_outcomes_c$snp_original)
+```
+
+We want to have the top 5 Domains, which were:
+Immunological’, ‘Skeletal’, ‘Metabolic’, ‘Respiratory’ and ‘Psychiatric’ 
+
+```{r}
+qtls_placenta_genes_phewas_outcomes_c_topdomains <- qtls_placenta_genes_phewas_outcomes_c[qtls_placenta_genes_phewas_outcomes_c$domain %in% c("Immunological", "Skeletal", "Metabolic", "Respiratory", "Psychiatric"), ]
+```
+
+```{r}
+nrow(qtls_placenta_genes_phewas_outcomes_c_topdomains)
+nrow(unique(qtls_placenta_genes_phewas_outcomes_c_topdomains[,c("snp_original", "gene")]))
+length(unique(qtls_placenta_genes_phewas_outcomes_c_topdomains$snp_original))
+length(unique(qtls_placenta_genes_phewas_outcomes_c_topdomains$gene))
+length(unique(qtls_placenta_genes_phewas_outcomes_c_topdomains$cpg))
+```
+186 associations, 17 unique gene-snp combinations, 16 unique snps, 17 unique genes, 23 cpgs
+
+```{r}
+# shorten extremely long entrires
+qtls_placenta_genes_phewas_outcomes_c_topdomains$trait <- str_replace(qtls_placenta_genes_phewas_outcomes_c_topdomains$trait, "Blood clot, DVT, bronchitis, emphysema, asthma, rhinitis, eczema, allergy diagnosed by doctor: Asthma", "Asthma")
+qtls_placenta_genes_phewas_outcomes_c_topdomains$trait <- str_replace(qtls_placenta_genes_phewas_outcomes_c_topdomains$trait, "Estimated bone mineral density from heel ultrasounds", "Bone mineral density")
+qtls_placenta_genes_phewas_outcomes_c_topdomains$trait <- str_replace(qtls_placenta_genes_phewas_outcomes_c_topdomains$trait, "Eosinophil percentage of white cells", "Eosinophil % white cells")
+qtls_placenta_genes_phewas_outcomes_c_topdomains$trait <- str_replace(qtls_placenta_genes_phewas_outcomes_c_topdomains$trait, "Asthma, hay fever or eczema", "Asthma/Allergy/Eczema")
+qtls_placenta_genes_phewas_outcomes_c_topdomains$trait <- str_replace(qtls_placenta_genes_phewas_outcomes_c_topdomains$trait, "Sum eosinophil basophil count", "Eosinophil + Basophil count")
+qtls_placenta_genes_phewas_outcomes_c_topdomains$trait <- str_replace(qtls_placenta_genes_phewas_outcomes_c_topdomains$trait, "Neutrophil percentage of granulocytes", "Neutrophil % granulocytes")
+qtls_placenta_genes_phewas_outcomes_c_topdomains$trait <- str_replace(qtls_placenta_genes_phewas_outcomes_c_topdomains$trait, "Eosinophil percentage of granulocytes", "Eosinophil % granulocytes")
+qtls_placenta_genes_phewas_outcomes_c_topdomains$trait <- str_replace(qtls_placenta_genes_phewas_outcomes_c_topdomains$trait, "Systemic Lupus Erythematosus", "SLE")
+qtls_placenta_genes_phewas_outcomes_c_topdomains$trait <- str_replace(qtls_placenta_genes_phewas_outcomes_c_topdomains$trait, "Red cell distribution width", "RDW")
+qtls_placenta_genes_phewas_outcomes_c_topdomains$trait <- str_replace(qtls_placenta_genes_phewas_outcomes_c_topdomains$trait, "Standing height", "Height")
+qtls_placenta_genes_phewas_outcomes_c_topdomains$trait <- str_replace(qtls_placenta_genes_phewas_outcomes_c_topdomains$trait, "Sitting height", "Height")
+qtls_placenta_genes_phewas_outcomes_c_topdomains$trait <- str_replace(qtls_placenta_genes_phewas_outcomes_c_topdomains$trait, "Mean corpuscular hemoglobin", "MCH")
+qtls_placenta_genes_phewas_outcomes_c_topdomains$trait <- str_replace(qtls_placenta_genes_phewas_outcomes_c_topdomains$trait, "MCH concentration", "MCHC")
+qtls_placenta_genes_phewas_outcomes_c_topdomains$trait <- str_replace(qtls_placenta_genes_phewas_outcomes_c_topdomains$trait, "Mean corpuscular volume", "MCV")
+qtls_placenta_genes_phewas_outcomes_c_topdomains$trait <- str_replace(qtls_placenta_genes_phewas_outcomes_c_topdomains$trait, "Immature fraction of reticulocytes", "IRF")
+qtls_placenta_genes_phewas_outcomes_c_topdomains$trait <- str_replace(qtls_placenta_genes_phewas_outcomes_c_topdomains$trait, "Schizophrenia vs Bipolar disorder", "Schizophrenia vs Bipolar")
+qtls_placenta_genes_phewas_outcomes_c_topdomains$trait <- str_replace(qtls_placenta_genes_phewas_outcomes_c_topdomains$trait, "High light scatter reticulocyte count", "High light scatter retic count")
+qtls_placenta_genes_phewas_outcomes_c_topdomains$trait <- gsub("Impedance measures - ", "", qtls_placenta_genes_phewas_outcomes_c_topdomains$trait)
+```
+
+```{r}
+save(qtls_placenta_genes_phewas_outcomes_c_topdomains, file = here("02_Data/PheWAS_GWAS_Atlas/","qtls_placenta_genes_phewas_outcomes_c_topdomains.Rdata"))
+```
+
+
+```{r}
+eqtls_placenta_genes_phewas_outcomes_c_topdomains <- qtls_placenta_genes_phewas_outcomes_c_topdomains[qtls_placenta_genes_phewas_outcomes_c_topdomains$type == "eQTL", ]
+meqtls_placenta_genes_phewas_outcomes_c_topdomains <- qtls_placenta_genes_phewas_outcomes_c_topdomains[qtls_placenta_genes_phewas_outcomes_c_topdomains$type == "meQTL", ]
+```
+
+```{r}
+save(eqtls_placenta_genes_phewas_outcomes_c_topdomains, file = here("02_Data/PheWAS_GWAS_Atlas/","eqtls_placenta_genes_phewas_outcomes_c_topdomains.Rdata"))
+write.csv(eqtls_placenta_genes_phewas_outcomes_c_topdomains, file=here("Analyses/Results/PlacentaPheWAS", "eqtls_placenta_genes_phewas_outcomes_c_topdomains.csv"), row.names = FALSE)
+
+save(meqtls_placenta_genes_phewas_outcomes_c_topdomains, file = here("02_Data/PheWAS_GWAS_Atlas/","meqtls_placenta_genes_phewas_outcomes_c_topdomains.Rdata"))
+write.csv(meqtls_placenta_genes_phewas_outcomes_c_topdomains, file=here("Analyses/Results/PlacentaPheWAS", "meqtls_placenta_genes_phewas_outcomes_c_topdomains.csv"), row.names = FALSE)
+```
+
+```{r}
+eqtls_placenta_genes_phewas_outcomes_c_topdomains_short <- eqtls_placenta_genes_phewas_outcomes_c_topdomains[,c("snp_original", "trait", "gene_symbol", "domain")]
+meqtls_placenta_genes_phewas_outcomes_c_topdomains_short <- meqtls_placenta_genes_phewas_outcomes_c_topdomains[,c("snp_original", "trait", "cpg", "gene_symbol", "domain")]
+
+eqtls_placenta_genes_phewas_outcomes_c_topdomains_short$freq <- 1
+meqtls_placenta_genes_phewas_outcomes_c_topdomains_short$freq <- 1
+```
+
+*Plot*
+
+gg graph with relationships 
+```{r}
+g_meqtl <- setNames(meqtls_placenta_genes_phewas_outcomes_c_topdomains_short[c('domain', 'trait')], c('from', 'to')) |>
+  rbind(setNames(meqtls_placenta_genes_phewas_outcomes_c_topdomains_short[c('trait', 'snp_original')], c('from', 'to'))) |>
+  rbind(setNames(meqtls_placenta_genes_phewas_outcomes_c_topdomains_short[c('snp_original', 'cpg')], c('from', 'to'))) |>
+  rbind(setNames(meqtls_placenta_genes_phewas_outcomes_c_topdomains_short[c('cpg', 'gene_symbol')], c('from', 'to'))) |>
+  as_tbl_graph() %>%
+  mutate(group = factor(group_components()))
+```
+
+```{r}
+g_eqtl <- setNames(eqtls_placenta_genes_phewas_outcomes_c_topdomains_short[c('domain', 'trait')], c('from', 'to')) |>
+  rbind(setNames(eqtls_placenta_genes_phewas_outcomes_c_topdomains_short[c('trait', 'snp_original')], c('from', 'to'))) |>
+  rbind(setNames(eqtls_placenta_genes_phewas_outcomes_c_topdomains_short[c('snp_original', 'gene_symbol')], c('from', 'to'))) |>
+  as_tbl_graph() %>%
+  mutate(group = factor(group_components()))
+``` 
+
+```{r}
+color_green <- desatcolor("#999933", 0.7)
+color_green_lighter <- lighten(color_green, 0.3)
+```
+
+
+```{r}
+ggg_eqtls <- ggraph(g_eqtl) + 
+  geom_edge_bend(width = 0.3, alpha = 0.5) +
+  geom_node_label(aes(label = name), color = 'black', hjust = 1, fill = color_green_lighter) + # fill = 'lightgrey'
+  coord_flip(clip = 'off') +
+  scale_y_reverse() +
+  theme_void() +
+  theme(plot.margin = margin(10, 0, 10, 90)) + # trbl
+  theme(
+    text=element_text(size=standard_textsize, family = "Helvetica"),
+    legend.text=element_text(size=standard_textsize, family = "Helvetica"),
+    legend.title=element_text(size=standard_textsize, family = "Helvetica"),
+    plot.title = element_text(size=standard_textsize*1.5, family = "Helvetica", face = "bold", hjust = 0.5)) +
+  ggtitle("eQTLs \n") +
+  scale_fill_brewer(palette = 'Set1', guide = 'none')
+
+ggg_eqtls
+```
+
+```{r}
+ggg_meqtls <- ggraph(g_meqtl) + 
+  geom_edge_bend(width = 0.3, alpha = 0.5) +
+  geom_node_label(aes(label = name), color = 'black', hjust = 1, fill = color_green_lighter) + #fill = 'lightgrey',
+  coord_flip(clip = 'off') +
+  scale_y_reverse() +
+  theme_void() +
+  theme(plot.margin = margin(10, 0, 10, 90)) + # trbl
+  theme(
+    text=element_text(size=standard_textsize, family = "Helvetica"),
+    legend.text=element_text(size=standard_textsize, family = "Helvetica"),
+    legend.title=element_text(size=standard_textsize, family = "Helvetica"),
+    plot.title = element_text(size=standard_textsize*1.5, family = "Helvetica", face = "bold", hjust = 0.5)) +
+  ggtitle("meQTLs-eQTMs \n") +
+  scale_fill_brewer(palette = 'Set1', guide = 'none')
+
+
+ggg_meqtls
+```
+
+```{r}
+gggraph_plot_phewas <-
+  plot_grid(
+    ggg_eqtls,
+    ggg_meqtls + theme(legend.position = "none"),
+    align = "hv",
+    labels = c("a", "b"),
+    rel_widths = c(0.92, 2.1),
+    hjust = -1,
+    nrow = 1
+  )
+```
+
+```{r}
+ggsave(here("Analyses/Results/PlacentaPheWAS/", "gggraph_plot_phewas.png"), gggraph_plot_phewas, width=standard_width_mm_double, height=standard_height_mm, units="mm", dpi=300, scale=2, bg = "white")
+```
+
+*Further explore top domains*
+```{r}
+snps_traits_number <- 
+  qtls_placenta_genes_phewas_outcomes_c_topdomains %>% 
+  group_by(snp_original) %>% 
+  summarise(n_traits = n_distinct(trait))
+```
+
+SNP linked to 15 traits: rs1737028
+
+```{r}
+rs1737028_qtls_tratis <- qtls_placenta_genes_phewas_outcomes[qtls_placenta_genes_phewas_outcomes$snp_original == "rs1737028", ]
+```
+
+```{r}
+length(unique(rs1737028_qtls_tratis$cpg))
+unique(rs1737028_qtls_tratis$cpg)
+```
+
+
+```{r}
+# correlation between CpGs
+
+ load(here("/02_Data/prepared/", "methylation_M_placenta_filtered.Rdata"))
+
+cpgs_4_top_mqtls <- data.frame(t(methylation_M_placenta_filtered[rownames(methylation_M_placenta_filtered) %in% c( "cg14443519", "cg11901272", "cg00501272", "cg23849169"), ]))
+
+cor(cpgs_4_top_mqtls)
+```
+
+
+
+
+

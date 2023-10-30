@@ -1,0 +1,517 @@
+---
+title: "Script_1_1_General_Preparation"
+author: Linda Dieckmann
+date: 2022
+output: github_document
+---
+
+In this notebook we prepare our (already pre-processed) Methylation, RNA-Seq and Genotype data for QTL analyses together with covariates.
+
+# load packages
+```{r, warning=FALSE}
+library(here)
+library(DESeq2)
+library(factoextra)
+library(biomaRt)
+library(dplyr)
+library(MASS)
+```
+
+If you update package(s) call 
+  renv::snapshot() 
+to save the current picture of the project.
+
+```{r}
+writeLines(capture.output(sessionInfo()), here("Analyses/Scripts/sessionInfos/", "sessionInfo_Script_1_1.txt"))
+```
+
+# load functions
+```{r}
+source(here("Analyses/Scripts/", "functions.R"))
+```
+
+# data
+## RNASeq
+### Placenta ITU
+```{r}
+# placenta TMM normalized and inverse rank transformation
+load(here("02_Data/raw/", "inv_norm_placenta_tmm.Rdata"))
+dim(inv_norm_placenta_tmm)
+```
+
+
+```{r}
+# metadata DESeq object
+load(here("02_Data/raw/", "dds_final_samples_placenta.Rdata"))
+colData_RNA_placenta <- data.frame(colData(dds_final_samples_placenta)) # contains SV1
+save(colData_RNA_placenta, file = here("02_Data/raw/", "colData_RNA_placenta.Rdata"))
+```
+
+
+### CVS ITU
+```{r}
+# cvs TMM normalized and inverse rank transformation
+load(here("02_Data/raw/", "inv_norm_cvs_tmm.Rdata"))
+dim(inv_norm_cvs_tmm)
+```
+
+```{r}
+# metadata DESeq object
+load(here("02_Data/raw/", "dds_final_samples_cvs.Rdata"))
+colData_RNA_cvs <- data.frame(colData(dds_final_samples_cvs))
+save(colData_RNA_cvs, file = here("02_Data/raw/", "colData_RNA_cvs.Rdata"))
+```
+
+## Methylation
+non-variable CpGs identified previously:
+```{r}
+load(here("02_Data/raw/", "Placenta_nonvariable_cpgs_all.Rdata"))
+```
+'outlier' samples identified previously:
+```{r}
+load(here("02_Data/raw/", "samples_different_placenta_itu_meth.Rdata"))
+```
+
+### Placenta ITU
+```{r}
+load(here("02_Data/raw/", "ExprSet_placenta_ITU.Rdata"))
+pd_placenta <- pData(ExprSet_placenta_ITU)
+methylation_betas_placenta <- exprs(ExprSet_placenta_ITU)
+```
+
+#### exclude the 16 samples identified to be different previously (Dieckmann et al. 2022)
+```{r}
+pd_placenta <- pd_placenta[!pd_placenta$Sample_Name %in% samples_different_placenta_itu_meth_wArrayID$Sample_Name, ]
+methylation_betas_placenta <- methylation_betas_placenta[, !colnames(methylation_betas_placenta) %in% samples_different_placenta_itu_meth_wArrayID$Sample_Name]
+dim(methylation_betas_placenta)
+```
+
+#### exclude the non-variable CpGs to be different previously (Dieckmann et al. 2022)
+```{r}
+methylation_betas_placenta_filtered <- methylation_betas_placenta[!rownames(methylation_betas_placenta) %in% Placenta_nonvariable_cpgs_all$CpG, ]
+dim(methylation_betas_placenta_filtered)
+```
+
+### CVS ITU
+```{r}
+load(here("02_Data/raw/", "ExprSet_CVS_ITU.Rdata"))
+pd_CVS <- pData(ExprSet_cvs_ITU)
+methylation_betas_cvs <- exprs(ExprSet_cvs_ITU)
+```
+
+#### exclude the non-variable CpGs identified in Dieckmann et al. 2022
+```{r}
+methylation_betas_cvs_filtered <- methylation_betas_cvs[!rownames(methylation_betas_cvs) %in% Placenta_nonvariable_cpgs_all$CpG, ]
+dim(methylation_betas_cvs_filtered)
+```
+
+### save beta values
+```{r}
+save(methylation_betas_placenta_filtered, file = here("02_Data/prepared/", "methylation_betas_placenta_filtered.Rdata"))
+save(methylation_betas_cvs_filtered, file = here("02_Data/prepared/", "methylation_betas_cvs_filtered.Rdata"))
+```
+
+### get & save M values
+```{r}
+methylation_M_placenta_filtered <- meth_BtoM(methylation_betas_placenta_filtered)
+methylation_M_cvs_filtered <- meth_BtoM(methylation_betas_cvs_filtered)
+```
+
+```{r}
+save(methylation_M_placenta_filtered, file = here("02_Data/prepared/", "methylation_M_placenta_filtered.Rdata"))
+save(methylation_M_cvs_filtered, file = here("02_Data/prepared/", "methylation_M_cvs_filtered.Rdata"))
+```
+
+## cell types (from methylation)
+```{r}
+load(here("02_Data/raw/", "robust_partial_correlation_epidish_placenta.Rdata"))
+load(here("02_Data/raw/", "robust_partial_correlation_epidish_cvs.Rdata"))
+```
+
+### run PCA on methylation cell types
+#### Placenta
+```{r}
+cells_meth_placenta <- robust_partial_correlation_epidish_placenta[rownames(robust_partial_correlation_epidish_placenta) %in% colnames(methylation_M_placenta_filtered), ]
+nrow(cells_meth_placenta)
+length(setdiff(colnames(methylation_M_placenta_filtered), rownames(cells_meth_placenta)))
+```
+
+```{r}
+pc_meth_placenta_cells <- prcomp(cells_meth_placenta, scale = T, retx = T)
+summary(pc_meth_placenta_cells)
+```
+3 PCs explain > 90% variability
+
+```{r}
+pca_meth_placenta_cells <- pc_meth_placenta_cells$x[, 1:3]
+colnames(pca_meth_placenta_cells) <- c("PC1_cells", "PC2_cells", "PC3_cells")
+```
+
+#### CVS
+```{r}
+cells_meth_cvs <- robust_partial_correlation_epidish_cvs[rownames(robust_partial_correlation_epidish_cvs) %in% colnames(methylation_M_cvs_filtered), ]
+nrow(cells_meth_cvs)
+length(setdiff(colnames(methylation_M_cvs_filtered), rownames(cells_meth_cvs)))
+```
+
+```{r}
+pc_meth_cvs_cells <- prcomp(cells_meth_cvs, scale = T, retx = T)
+summary(pc_meth_cvs_cells)
+```
+4 PCs explain > 90% variability
+
+```{r}
+pca_meth_cvs_cells <- pc_meth_cvs_cells$x[, 1:4]
+colnames(pca_meth_cvs_cells) <- c("PC1_cells", "PC2_cells", "PC3_cells", "PC4_cells")
+```
+
+#### save PC cell types
+```{r}
+save(pca_meth_placenta_cells, file = here("02_Data/prepared/", "pca_meth_placenta_cells.Rdata"))
+save(pca_meth_cvs_cells, file = here("02_Data/prepared/", "pca_meth_cvs_cells.Rdata"))
+```
+
+## Phenotypes
+```{r}
+load(here("02_Data/raw/", "ethnicity_ITU.Rdata"))
+
+load(here("02_Data/raw/", "ITU_register_vars.Rdata"))
+load(here("02_Data/raw/", "placenta_sampling_times.Rdata"))
+```
+
+## genotypes
+were pre-processed with plink = 3 plink files:
+
+* .bed: Primary representation of genotype calls at biallelic variants.
+00 Homozygous for first allele in .bim file 
+01 Missing genotype 
+10 Heterozygous 
+11 Homozygous for second allele in .bim file 
+example: 1 snp1 0 1 G A 1 snp2 0 2 1 2
+
+
+* .bim: A text file with no header line, and one line per variant with the following six fields: Chromosome code (either an integer, or ‘X’/‘Y’/‘XY’/‘MT’; ‘0’ indicates unknown) or name Variant identifier Position in morgans or centimorgans (safe to use dummy value of ‘0’) Base-pair coordinate (1-based; limited to 231-2) 
+Allele 1 (corresponding to clear bits in .bed; usually minor) 
+Allele 2 (corresponding to set bits in .bed; usually major)
+
+* .fam: A text file with no header line, and one line per sample with the following six fields: Family ID (‘FID’) Within-family ID (‘IID’; cannot be ‘0’) Within-family ID of father (‘0’ if father isn’t in dataset) Within-family ID of mother (‘0’ if mother isn’t in dataset) Sex code (‘1’ = male, ‘2’ = female, ‘0’ = unknown) Phenotype value (‘1’ = control, ‘2’ = case, ‘-9’/‘0’/non-numeric = missing data if case/control)
+
+I've already read them into R using the read.plink function; the R object I can load here contains the number of alleles for the corresponding SNP in every person.
+
+```{r}
+load(here("02_Data/raw/", "geno_t_fullqced_IDc.Rdata"))
+dim(geno_t_fullqced_IDc) # MAF 0.05
+
+load(here("02_Data/raw/", "geno_info.Rdata")) # info from bim file
+```
+
+MAF 0.05 with plink was calculated like this:
+plink --bfile /binder/Linda/Data/ITU/genotypes/QCed_imputed_fullqced/itu_all_qc2 --maf 0.05 --make-bed --out itu_all_qc2_mafiltered
+And read.plink was used to get an R data file.
+
+### take a look at MAF
+Calculating MAF is essentially counting the presence of the alleles in a population and representing it as a percentage. 
+Each individual can have 0, 1 or 2 times the second (usually major, in plink) allele.
+
+```{r}
+af = data.frame(cbind(rownames(geno_t_fullqced_IDc), (rowMeans(geno_t_fullqced_IDc, na.rm = TRUE)/2)))
+colnames(af) <- c("snp", "af_allele.2")
+af$af_allele.2 <- as.numeric(af$af_allele.2)
+```
+
+```{r}
+# calculate the parallel minimum of two vectors (here maf and 1-maf), to ensure we refer to minor
+af$maf <- as.numeric(formatC(pmin(af$af, 1-af$af), digits=4, format="f"))
+```
+
+quick check:
+```{r}
+truehist(af$maf, main = "Histogram of MAF values.", col = "steelblue", xlab = "")
+lines(density(af$maf), lty = 2, col = "darkorange", lwd = 3)
+```
+
+```{r}
+range(af$maf)
+```
+
+```{r}
+# How many MAF < threshold
+sum(af$maf < 0.01)
+sum(af$maf < 0.05)
+sum(af$maf < 0.10) # matches with what we expect
+sum(af$maf <= 0.10)
+```
+
+```{r}
+save(af, file=here("02_Data/prepared/", "maf_values_maf5_for_geno_t_fullqced_IDc.Rdata"))
+# these are our MAF values for whole genotype sample
+```
+
+```{r}
+geno_info_with_maf <- merge(geno_info, af, by.x="snp.name", by.y="snp")
+```
+
+```{r}
+save(geno_info_with_maf, file=here("02_Data/prepared/", "geno_info_with_maf.Rdata"))
+```
+
+# annotations
+## RNA
+use biomaRt
+
+```{r}
+ensembl <- useEnsembl(biomart = "genes", dataset = "hsapiens_gene_ensembl", GRCh=37)
+# Ensembl GRCh37 Feb 2014          https://grch37.ensembl.org  GRCh37     
+```
+note that we used GRCH37 here to have it concordant with the reference genome for methylation data (hg19 from Illumina; GRCh 37)
+
+```{r}
+save(ensembl, file = here("02_Data/raw", "ensembl.Rdata"))
+```
+
+### placenta
+```{r}
+annotation_genes_placenta_rna <- Get_Annotation_RNA(rownames(inv_norm_placenta_tmm), ensembl)
+```
+
+```{r}
+save(annotation_genes_placenta_rna, file = here("02_Data/prepared/", "annotation_genes_placenta_rna.Rdata"))
+```
+
+#### filter RNA-Seq data set to include only annotated genes on chromosome 1-22 
+```{r}
+inv_norm_placenta_tmm_filtered <- inv_norm_placenta_tmm[rownames(inv_norm_placenta_tmm) %in% annotation_genes_placenta_rna$ensembl_gene_id, ]
+dim(inv_norm_placenta_tmm_filtered)
+```
+
+```{r}
+inv_norm_placenta_tmm_filtered <- inv_norm_placenta_tmm_filtered[match(annotation_genes_placenta_rna$ensembl_gene_id, rownames(inv_norm_placenta_tmm_filtered)), ]
+identical(rownames(inv_norm_placenta_tmm_filtered), annotation_genes_placenta_rna$ensembl_gene_id)
+```
+
+```{r}
+save(inv_norm_placenta_tmm_filtered, file = here("02_Data/prepared/", "inv_norm_placenta_tmm_filtered.Rdata"))
+```
+
+### cvs
+```{r}
+annotation_genes_cvs_rna <- Get_Annotation_RNA(rownames(inv_norm_cvs_tmm), ensembl)
+```
+
+```{r}
+save(annotation_genes_cvs_rna, file = here("02_Data/prepared/", "annotation_genes_cvs_rna.Rdata"))
+```
+
+#### filter RNA-Seq data set to include only annotated genes on chromosome 1-22 
+```{r}
+inv_norm_cvs_tmm_filtered <- inv_norm_cvs_tmm[rownames(inv_norm_cvs_tmm) %in% annotation_genes_cvs_rna$ensembl_gene_id, ]
+dim(inv_norm_cvs_tmm_filtered)
+```
+```{r}
+inv_norm_cvs_tmm_filtered <- inv_norm_cvs_tmm_filtered[match(annotation_genes_cvs_rna$ensembl_gene_id, rownames(inv_norm_cvs_tmm_filtered)), ]
+identical(rownames(inv_norm_cvs_tmm_filtered), annotation_genes_cvs_rna$ensembl_gene_id)
+```
+
+```{r}
+save(inv_norm_cvs_tmm_filtered, file = here("02_Data/prepared/", "inv_norm_cvs_tmm_filtered.Rdata"))
+```
+
+## methylation
+```{r}
+load(here("02_Data/raw/", "annotation_epic.Rdata"))
+# this is from getAnnotation(IlluminaHumanMethylationEPICanno.ilm10b4.hg19)
+# annotation_epic <- data.frame(getAnnotation(IlluminaHumanMethylationEPICanno.ilm10b4.hg19))
+```
+
+### placenta
+```{r}
+annotation_placenta_meth <- annotation_epic[rownames(annotation_epic) %in% rownames(methylation_M_placenta_filtered), ]
+annotation_placenta_meth <- annotation_placenta_meth[match(rownames(methylation_M_placenta_filtered), rownames(annotation_placenta_meth)), ]
+identical(rownames(annotation_placenta_meth), rownames(methylation_M_placenta_filtered))
+annotation_placenta_meth$PROBE_ID <- rownames(annotation_placenta_meth)
+```
+
+```{r}
+unique(annotation_placenta_meth$chr)
+```
+
+```{r}
+save(annotation_placenta_meth, file = here("02_Data/prepared/", "annotation_placenta_meth.Rdata"))
+write.table(annotation_placenta_meth, file = here("02_Data/prepared/", "annotation_placenta_meth.txt"), row.names = F, quote=F)
+```
+
+### CVS
+```{r}
+annotation_cvs_meth <- annotation_epic[rownames(annotation_epic) %in% rownames(methylation_M_cvs_filtered), ]
+annotation_cvs_meth <- annotation_cvs_meth[match(rownames(methylation_M_cvs_filtered), rownames(annotation_cvs_meth)), ]
+identical(rownames(annotation_cvs_meth), rownames(methylation_M_cvs_filtered))
+annotation_cvs_meth$PROBE_ID <- rownames(annotation_cvs_meth)
+```
+
+```{r}
+unique(annotation_cvs_meth$chr)
+```
+
+```{r}
+save(annotation_cvs_meth, file = here("02_Data/prepared/", "annotation_cvs_meth.Rdata"))
+write.table(annotation_cvs_meth, file = here("02_Data/prepared/", "annotation_cvs_meth.txt"), row.names = F, quote=F)
+```
+
+# match / select data
+We need to make sure that we have information about phenotypes and confounders matching for our biological data
+
+## RNA
+### Placenta
+```{r}
+register_confounders_RNA_placenta <- ITU_register_vars[ITU_register_vars$IDfamily %in% colnames(inv_norm_placenta_tmm_filtered), ]
+nrow(register_confounders_RNA_placenta) # number of samples
+length(setdiff(colnames(inv_norm_placenta_tmm_filtered), ITU_register_vars$IDfamily))
+```
+
+```{r}
+sampling_confounders_RNA_placenta <- placenta_sampling_times[placenta_sampling_times$Sample_Name %in% colnames(inv_norm_placenta_tmm_filtered), ]
+nrow(sampling_confounders_RNA_placenta) # number of samples
+length(setdiff(colnames(inv_norm_placenta_tmm_filtered), placenta_sampling_times$Sample_Name))
+```
+
+Let's merge the RNA confounders together
+```{r}
+confounders_RNA_placenta <- merge(register_confounders_RNA_placenta, sampling_confounders_RNA_placenta, by.x = "IDfamily", by.y = "Sample_Name")
+confounders_RNA_placenta <- merge(confounders_RNA_placenta, colData_RNA_placenta[, c("ID", "SV1")], by.x = "IDfamily", by.y = "ID")
+```
+
+```{r}
+ethnicity_RNA_placenta <- ethnicity_ITU[ethnicity_ITU$IID %in% colnames(inv_norm_placenta_tmm_filtered), ]
+nrow(ethnicity_RNA_placenta) # number of samples
+colnames(ethnicity_RNA_placenta) <- c("IID", sprintf("ethnicity%d", seq(1:10)))
+length(setdiff(colnames(inv_norm_placenta_tmm_filtered), ethnicity_ITU$IID))
+```
+
+Add ethnicity, missing for some people 
+```{r}
+confounders_RNA_placenta <- merge(confounders_RNA_placenta, ethnicity_RNA_placenta, by.x = "IDfamily", by.y = "IID", all.x = TRUE)
+```
+
+clean up
+```{r}
+rm(register_confounders_RNA_placenta, sampling_confounders_RNA_placenta, colData_RNA_placenta, ethnicity_RNA_placenta)
+gc()
+```
+
+```{r}
+save(confounders_RNA_placenta, file = here("02_Data/prepared/", "confounders_RNA_placenta.Rdata"))
+```
+
+### CVS
+```{r}
+register_confounders_RNA_cvs <- ITU_register_vars[ITU_register_vars$IDfamily %in% colnames(inv_norm_cvs_tmm_filtered), ]
+nrow(register_confounders_RNA_cvs) # number of samples
+length(setdiff(colnames(inv_norm_cvs_tmm_filtered), ITU_register_vars$IDfamily))
+```
+```{r}
+sampling_confounders_RNA_cvs <- placenta_sampling_times[placenta_sampling_times$Sample_Name %in% colnames(inv_norm_cvs_tmm_filtered), ]
+nrow(sampling_confounders_RNA_cvs) # number of samples
+length(setdiff(colnames(inv_norm_cvs_tmm_filtered), placenta_sampling_times$Sample_Name))
+```
+
+Let's merge the RNA confounders together
+```{r}
+confounders_RNA_cvs <- merge(register_confounders_RNA_cvs, sampling_confounders_RNA_cvs, by.x = "IDfamily", by.y = "Sample_Name")
+confounders_RNA_cvs <- merge(confounders_RNA_cvs, colData_RNA_cvs[, c("SampleID", "SV1")], by.x = "IDfamily", by.y = "SampleID")
+```
+
+```{r}
+ethnicity_RNA_cvs <- ethnicity_ITU[ethnicity_ITU$IID %in% colnames(inv_norm_cvs_tmm_filtered), ]
+nrow(ethnicity_RNA_cvs) # number of samples
+colnames(ethnicity_RNA_cvs) <- c("IID", sprintf("ethnicity%d", seq(1:10)))
+length(setdiff(colnames(inv_norm_cvs_tmm_filtered), ethnicity_ITU$IID))
+```
+
+Add ethnicity, missing for some people
+```{r}
+confounders_RNA_cvs <- merge(confounders_RNA_cvs, ethnicity_RNA_cvs, by.x = "IDfamily", by.y = "IID", all.x = TRUE)
+```
+
+clean up
+```{r}
+rm(register_confounders_RNA_cvs, sampling_confounders_RNA_cvs, colData_RNA_cvs, ethnicity_RNA_cvs)
+gc()
+```
+
+```{r}
+save(confounders_RNA_cvs, file = here("02_Data/prepared/", "confounders_RNA_cvs.Rdata"))
+```
+
+## methylation
+### Placenta
+```{r}
+register_confounders_meth_placenta <- ITU_register_vars[ITU_register_vars$IDfamily %in% colnames(methylation_M_placenta_filtered), ]
+nrow(register_confounders_meth_placenta) # number of samples
+length(setdiff(colnames(methylation_M_placenta_filtered), ITU_register_vars$IDfamily))
+```
+
+```{r}
+cells_meth_placenta <- robust_partial_correlation_epidish_placenta[rownames(robust_partial_correlation_epidish_placenta) %in% colnames(methylation_M_placenta_filtered), ]
+nrow(cells_meth_placenta)
+length(setdiff(colnames(methylation_M_placenta_filtered), rownames(cells_meth_placenta)))
+```
+
+Let's merge the methylation confounders together
+```{r}
+confounders_meth_placenta <- merge(register_confounders_meth_placenta, cells_meth_placenta, by.x = "IDfamily", by.y = "row.names")
+confounders_meth_placenta <- merge(confounders_meth_placenta, pca_meth_placenta_cells, by.x = "IDfamily", by.y = "row.names")
+```
+
+```{r}
+ethnicity_meth_placenta <- ethnicity_ITU[ethnicity_ITU$IID %in% colnames(methylation_M_placenta_filtered), ]
+nrow(ethnicity_meth_placenta) # number of samples
+colnames(ethnicity_meth_placenta) <- c("IID", sprintf("ethnicity%d", seq(1:10)))
+length(setdiff(colnames(methylation_M_placenta_filtered), ethnicity_ITU$IID))
+```
+
+Add ethnicity, missing for some people
+```{r}
+confounders_meth_placenta <- merge(confounders_meth_placenta, ethnicity_meth_placenta, by.x = "IDfamily", by.y = "IID", all.x = TRUE)
+```
+
+```{r}
+save(confounders_meth_placenta, file = here("02_Data/prepared/", "confounders_meth_placenta.Rdata"))
+```
+
+### CVS
+```{r}
+register_confounders_meth_cvs <- ITU_register_vars[ITU_register_vars$IDfamily %in% colnames(methylation_M_cvs_filtered), ]
+nrow(register_confounders_meth_cvs) # number of samples
+length(setdiff(colnames(methylation_M_cvs_filtered), ITU_register_vars$IDfamily))
+```
+
+```{r}
+# cells
+cells_meth_cvs <- robust_partial_correlation_epidish_cvs[rownames(robust_partial_correlation_epidish_cvs) %in% colnames(methylation_M_cvs_filtered), ]
+nrow(cells_meth_cvs)
+length(setdiff(colnames(methylation_M_cvs_filtered), rownames(cells_meth_cvs)))
+```
+
+Let's merge the methylation confounders together
+```{r}
+confounders_meth_cvs <- merge(register_confounders_meth_cvs, cells_meth_cvs, by.x = "IDfamily", by.y = "row.names")
+confounders_meth_cvs <- merge(confounders_meth_cvs, pca_meth_cvs_cells, by.x = "IDfamily", by.y = "row.names")
+```
+
+```{r}
+ethnicity_meth_cvs <- ethnicity_ITU[ethnicity_ITU$IID %in% colnames(methylation_M_cvs_filtered), ]
+nrow(ethnicity_meth_cvs) # number of samples
+colnames(ethnicity_meth_cvs) <- c("IID", sprintf("ethnicity%d", seq(1:10)))
+length(setdiff(colnames(methylation_M_cvs_filtered), ethnicity_ITU$IID))
+```
+
+Add ethnicity, missing for some people
+```{r}
+confounders_meth_cvs <- merge(confounders_meth_cvs, ethnicity_meth_cvs, by.x = "IDfamily", by.y = "IID", all.x = TRUE)
+```
+
+```{r}
+save(confounders_meth_cvs, file = here("02_Data/prepared/", "confounders_meth_cvs.Rdata"))
+```
+
+

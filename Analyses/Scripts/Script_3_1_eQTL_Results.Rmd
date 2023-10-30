@@ -1,0 +1,483 @@
+---
+title: "Basic Results eQTLs from MatrixEQTL and BootstrapQTL"
+author: Linda Dieckmann
+date: November 2022
+output: github_document
+---
+
+In this notebook we take take a look at basic results from MatrixEQTL vs. BootstrapQTL for eQTLs
+
+# load packages
+```{r, warning=FALSE}
+library(here)
+library(MatrixEQTL)
+library(BootstrapQTL)
+library(ggplot2)
+library(dplyr)
+library(cowplot)
+library(scales)
+library(data.table)
+```
+
+If you update package(s) call 
+  renv::snapshot() 
+to save the current picture of the project.
+
+```{r}
+writeLines(capture.output(sessionInfo()), here("Analyses/Scripts/sessionInfos/", "sessionInfo_Script_3_1.txt"))
+```
+
+```{r}
+source(here("Analyses/Scripts/", "functions.R"))
+```
+
+Short Data Description:
+################################################################################
+*Matrix EQTL output*
+'ntests': Total number of tests performed. This is used for FDR calculation.
+'eqtls': Data frame with recorded significant associations. Not available if noFDRsaveMemory=FALSE
+'neqtls': Number of significant associations recorded. note: significant refers to p-value here (uncorrected)
+One general note: In the MatrixEQTL pipeline, variables of both gene expression and genotype matrices are standaridezed 
+
+*BootstrapQTL output*
+’eGene’: The eQTL eGene
+’eSNPs’: The eQTL eSNP
+’statistic’: The test statistic for the association between the eGene and eSNP
+’nominal_beta’: The eQTL effect size for the eGene-eSNP pair estimated by MatrixEQTL
+’corrected_beta’: The eQTL effect size after adjustment for the winners_curse
+’winners_curse’: The amount of effect size overestimation determined by the bootstrap analysis (See Details).
+’correction_boots’: The number of bootstraps that contributed to the estimation of the winners_curse, i.e. the number of bootstraps in which the eSNP remained significantly associated with the eGene (see Details).
+’nominal_pval’: The p-value for the eGene-eSNP pair from the MatrixEQTL analysis
+’eSNP_pval’: The locally corrected p-value for the eGene-eSNP pair (see Details)
+’eGene_pval’: The globally corrected p-value for the eGene based on its top eSNP (see Details)
+
+################################################################################
+
+# load data
+<!-- ## input data -->
+<!-- ```{r} -->
+<!-- # eQTL -->
+<!-- load(here("02_Data/prepared", "inv_norm_placenta_tmm_filtered_ordered_eqtl.Rdata")) -->
+<!-- load(here("02_Data/prepared", "geno_t_fullqced_IDc_placenta_ordered_eqtl.Rdata")) -->
+<!-- load(here("02_Data/prepared", "inv_norm_cvs_tmm_filtered_ordered_eqtl.Rdata")) -->
+<!-- load(here("02_Data/prepared", "geno_t_fullqced_IDc_cvs_ordered_eqtl.Rdata")) -->
+<!-- ``` -->
+
+## QTL analyses results
+eQTL
+```{r}
+# MatrixEQTL
+load(here("02_Data/MatrixEQTL_Output", "me_eqtl_placenta.Rdata"))
+load(here("02_Data/MatrixEQTL_Output", "me_eqtl_cvs.Rdata"))
+
+# Bootstrap QTL (data frame with results for significant hits)
+load(here("02_Data/MatrixEQTL_Output", "bme_eqtl_placenta.Rdata"))
+load(here("02_Data/MatrixEQTL_Output", "bme_eqtl_cvs.Rdata"))
+
+# Bootstrap QTL clumped
+load(here("02_Data/QTL_Data/", "bme_eqtl_cvs_clumped.Rdata"))
+load(here("02_Data/QTL_Data/", "bme_eqtl_placenta_clumped.Rdata"))
+```
+
+sample names
+```{r}
+load(here("02_Data/prepared", "common_eqtl_placenta_ids.Rdata"))
+load(here("02_Data/prepared", "common_eqtl_cvs_ids.Rdata"))
+```
+
+geno and gene info
+```{r}
+load(here("02_Data/prepared/", "geno_info_with_maf.Rdata")) # info from bim file with minor allele frequency
+load(here("02_Data/prepared/", "annotation_genes_placenta_rna.Rdata"))
+load(here("02_Data/prepared/", "annotation_genes_cvs_rna.Rdata"))
+```
+
+# eQTLs
+
+```{r}
+genotypes <- geno_info_with_maf[ ,c("snp.name", "chromosome", "position", "allele.2", "allele.1", "af_allele.2", "maf")]
+names(genotypes) <- c("snp_name", "snp_chromosome", "snp_position", "effect_allele", "alternative_allele", "eaf", "maf")
+```
+
+```{r}
+genes_placenta <- annotation_genes_placenta_rna
+names(genes_placenta) <- c("ENSEMBL", "gene_chromosome", "gene_start_position", "gene_end_position", "HGNC_symbol")
+
+genes_cvs <- annotation_genes_cvs_rna
+names(genes_cvs) <- c("ENSEMBL", "gene_chromosome", "gene_start_position", "gene_end_position", "HGNC_symbol")
+```
+
+## Placenta
+
+### MatrixEQTL
+standard eQTLs output (linear model (t-statistic), only cis associations)
+```{r}
+statistics_me_eqtl_placenta_cis <- me_eqtl_placenta$cis$eqtls
+```
+
+we add standard error and r2
+```{r}
+statistics_me_eqtl_placenta_cis$se_beta <- statistics_me_eqtl_placenta_cis$beta / statistics_me_eqtl_placenta_cis$statistic
+```
+
+```{r}
+df_eqtl_placenta <- me_eqtl_placenta$param$dfFull
+r_eqtl_placenta <- statistics_me_eqtl_placenta_cis$statistic / sqrt(df_eqtl_placenta + statistics_me_eqtl_placenta_cis$statistic^2)
+r2_eqtl_placenta <- r_eqtl_placenta ^ 2
+```
+
+```{r}
+statistics_me_eqtl_placenta_cis$r2 <- r2_eqtl_placenta
+```
+
+
+How many tests were performed?
+```{r}
+me_eqtl_placenta$cis$ntests
+```
+
+How many cis associations with FDR < 0.05 were found with MatrixEQTL?
+```{r}
+statistics_me_eqtl_placenta_cis_fdr5 <- statistics_me_eqtl_placenta_cis[statistics_me_eqtl_placenta_cis$FDR < 0.05, ]
+nrow(statistics_me_eqtl_placenta_cis_fdr5)
+```
+
+add a column indicating if FDR < 0.05 to the total MatrixEQTL results
+```{r}
+statistics_me_eqtl_placenta_cis$FDRsig <- ifelse(statistics_me_eqtl_placenta_cis$FDR < 0.05, "yes", "no")
+# yes if FDR < 0.05
+```
+ 
+
+How many unique SNPs with FDR < 0.05 were found with MatrixEQTL?
+```{r}
+unique_snp_names_eqtl_placenta_fdr5_matrix <- unique(statistics_me_eqtl_placenta_cis_fdr5$snps)
+length(unique_snp_names_eqtl_placenta_fdr5_matrix)
+```
+
+How many unique genes with FDR < 0.05 were found with MatrixEQTL?
+```{r}
+unique_gene_names_eqtl_placenta_fdr5_matrix <- unique(statistics_me_eqtl_placenta_cis_fdr5$gene)
+length(unique_gene_names_eqtl_placenta_fdr5_matrix)
+```
+
+```{r}
+volcano_plot_matrix(statistics_me_eqtl_placenta_cis, "eQTL placenta MatrixEQTL")
+```
+
+### Bootstrap QTL
+How many significant cis associations were found with Bootstrap QTL (global correction p < 0.05)?
+```{r}
+nrow(bme_eqtl_placenta)
+```
+
+How many unique SNPs do we have?
+```{r}
+unique_snp_names_eqtl_placenta_boot <- unique(bme_eqtl_placenta$eSNPs)
+length(unique_snp_names_eqtl_placenta_boot)
+```
+
+How many unqiue genes do we have?
+```{r}
+unique_gene_names_eqtl_placenta_boot <- unique(bme_eqtl_placenta$eGene)
+length(unique_gene_names_eqtl_placenta_boot)
+```
+
+```{r}
+volcano_plot_boot(bme_eqtl_placenta, "eQTL placenta BootstrapQTL")
+```
+
+```{r}
+bme_eqtl_placenta$inboot<- "yes"
+# if among the bootstrapqtl results, yes
+```
+
+*combine MatrixEQTL and BootstrapQTL Data*
+```{r}
+eQTLs_placenta_statistics <- merge(bme_eqtl_placenta[,-c(3,4)], statistics_me_eqtl_placenta_cis, all = T, by.x=c("eGene", "eSNPs"), by.y=c("gene", "snps"))
+```
+```{r}
+eQTLs_placenta_statistics[c("inboot")][is.na(eQTLs_placenta_statistics[c("inboot")])] <- "no"
+```
+
+#### get results after clumping
+
+How many significant cis associations remain?
+```{r}
+nrow(bme_eqtl_placenta_clumped)
+```
+
+```{r}
+clumped_snps_genes_eqtls_placenta <- bme_eqtl_placenta_clumped[,c("eGene", "eSNPs")]
+```
+
+ 
+How many unique SNPs do we have?
+```{r}
+unique_snp_names_eqtl_placenta_boot_clumped <- unique(bme_eqtl_placenta_clumped$eSNPs)
+length(unique_snp_names_eqtl_placenta_boot_clumped)
+```
+How many unqiue genes do we have?
+```{r}
+unique_gene_names_eqtl_placenta_boot_clumped <- unique(bme_eqtl_placenta_clumped$eGene)
+length(unique_gene_names_eqtl_placenta_boot_clumped)
+```
+
+*add inidcator if association in combined MatrixEQTL and BootstrapQTL Data is also in clumped results*
+```{r}
+bme_eqtl_placenta_clumped <- bme_eqtl_placenta_clumped[,-c(3,4, 11:22)]
+bme_eqtl_placenta_clumped$inclumped <- "yes"
+# if among the clumped results, yes
+```
+
+```{r}
+eQTLs_placenta_statistics <- merge(eQTLs_placenta_statistics, bme_eqtl_placenta_clumped, all = T)
+eQTLs_placenta_statistics[c("inclumped")][is.na(eQTLs_placenta_statistics[c("inclumped")])] <- "no"
+# if not among the clumped results, no
+```
+
+*add geno and gene info*
+
+```{r}
+eQTLs_placenta_statistics <- merge(eQTLs_placenta_statistics, genotypes, by.x="eSNPs", by.y="snp_name")
+eQTLs_placenta_statistics <- merge(eQTLs_placenta_statistics, genes_placenta, by.x="eGene", by.y="ENSEMBL")
+```
+
+```{r}
+eQTLs_placenta_statistics$eaf <- round(eQTLs_placenta_statistics$eaf, 2)
+eQTLs_placenta_statistics$maf <- round(eQTLs_placenta_statistics$maf, 2)
+```
+
+### ODDs
+```{r}
+total_number_tests_placenta <- me_eqtl_placenta$cis$ntests
+number_positive_placenta <- nrow(bme_eqtl_placenta)
+```
+
+### export full eQTL placenta statistic table
+```{r, warning=F}
+#write.csv(eQTLs_placenta_statistics, file = here("Analyses/Results/Descriptive", "eQTLs_placenta_statistics.csv"), row.names = FALSE, col.names = T)
+save(eQTLs_placenta_statistics, file = here("Analyses/Results/Descriptive", "eQTLs_placenta_statistics.Rdata"))
+```
+
+How is the median beta and r2?
+```{r}
+final_associations_eqtl_placenta_clumped <- eQTLs_placenta_statistics[eQTLs_placenta_statistics$inclumped == "yes", ]
+summary(final_associations_eqtl_placenta_clumped$corrected_beta)
+summary(final_associations_eqtl_placenta_clumped$r2)
+```
+
+### histogram plot
+```{r}
+hits_df_eqtls_placenta <- data.frame(c(nrow(statistics_me_eqtl_placenta_cis_fdr5), length(unique_snp_names_eqtl_placenta_fdr5_matrix), length(unique_gene_names_eqtl_placenta_fdr5_matrix)), c(nrow(bme_eqtl_placenta), length(unique_snp_names_eqtl_placenta_boot), length(unique_gene_names_eqtl_placenta_boot)), c(nrow(bme_eqtl_placenta_clumped), length(unique_snp_names_eqtl_placenta_boot_clumped), length(unique_gene_names_eqtl_placenta_boot_clumped)))
+
+rownames(hits_df_eqtls_placenta) <- c("cis eQTLs", "unique SNPs", "unique Genes")
+colnames(hits_df_eqtls_placenta) <- c("MatrixEQTL", "BootstrapQTL", "clumped") 
+
+hits_df_eqtls_placenta <- hits_df_eqtls_placenta %>% as.matrix() %>% reshape2::melt(varnames = c("number", "method"), value.name = "cnt")
+```
+
+```{r}
+save(hits_df_eqtls_placenta, file = here("02_Data/MatrixEQTL_Output", "hits_df_eqtls_placenta.Rdata"))
+```
+
+```{r}
+barplot_counts_function(hits_df_eqtls_placenta, "Placenta", "clumped", colors_placenta_3levels, ylimits=c(0,136000))
+```
+
+## CVS
+
+### MatrixEQTL
+standard eQTLs output (linear model (t-statistic), only cis associations)
+```{r}
+statistics_me_eqtl_cvs_cis <- me_eqtl_cvs$cis$eqtls
+```
+
+we add standard error and r2
+```{r}
+statistics_me_eqtl_cvs_cis$se_beta <- statistics_me_eqtl_cvs_cis$beta / statistics_me_eqtl_cvs_cis$statistic
+```
+
+```{r}
+df_eqtl_cvs <- me_eqtl_cvs$param$dfFull
+r_eqtl_cvs <- statistics_me_eqtl_cvs_cis$statistic / sqrt(df_eqtl_cvs + statistics_me_eqtl_cvs_cis$statistic^2)
+r2_eqtl_cvs <- r_eqtl_cvs ^ 2
+```
+
+```{r}
+statistics_me_eqtl_cvs_cis$r2 <- r2_eqtl_cvs
+```
+
+How many tests were performed?
+```{r}
+me_eqtl_cvs$cis$ntests
+```
+
+How many cis associations with FDR < 0.05 were found with MatrixEQTL?
+```{r}
+statistics_me_eqtl_cvs_cis_fdr5 <- statistics_me_eqtl_cvs_cis[statistics_me_eqtl_cvs_cis$FDR < 0.05, ]
+nrow(statistics_me_eqtl_cvs_cis_fdr5)
+```
+add a column indicating if FDR < 0.05 to the total MatrixEQTL results
+```{r}
+statistics_me_eqtl_cvs_cis$FDRsig <- ifelse(statistics_me_eqtl_cvs_cis$FDR < 0.05, "yes", "no")
+# yes if FDR < 0.05
+```
+
+How many unique SNPs with FDR < 0.05 were found with MatrixEQTL?
+```{r}
+unique_snp_names_eqtl_cvs_fdr5_matrix <- unique(statistics_me_eqtl_cvs_cis_fdr5$snps)
+length(unique_snp_names_eqtl_cvs_fdr5_matrix)
+```
+
+How many unique genes with FDR < 0.05 were found with MatrixEQTL?
+```{r}
+unique_gene_names_eqtl_cvs_fdr5_matrix <- unique(statistics_me_eqtl_cvs_cis_fdr5$gene)
+length(unique_gene_names_eqtl_cvs_fdr5_matrix)
+```
+
+```{r}
+volcano_plot_matrix(statistics_me_eqtl_cvs_cis, "eQTL cvs MatrixEQTL")
+```
+
+### Bootstrap QTL
+How many significant cis associations were found with Bootstrap QTL (global correction p < 0.05)?
+```{r}
+nrow(bme_eqtl_cvs)
+```
+
+How many unique SNPs do we have?
+```{r}
+unique_snp_names_eqtl_cvs_boot <- unique(bme_eqtl_cvs$eSNPs)
+length(unique_snp_names_eqtl_cvs_boot)
+```
+How many unqiue genes do we have?
+```{r}
+unique_gene_names_eqtl_cvs_boot <- unique(bme_eqtl_cvs$eGene)
+length(unique_gene_names_eqtl_cvs_boot)
+```
+
+```{r}
+volcano_plot_boot(bme_eqtl_cvs, "eQTL cvs BootstrapQTL")
+```
+
+```{r}
+bme_eqtl_cvs$inboot<- "yes"
+# if among the bootstrapqtl results, yes
+```
+
+*combine MatrixEQTL and BootstrapQTL Data*
+```{r}
+eQTLs_cvs_statistics <- merge(bme_eqtl_cvs[,-c(3,4)], statistics_me_eqtl_cvs_cis, all = T, by.x=c("eGene", "eSNPs"), by.y=c("gene", "snps"))
+```
+
+```{r}
+eQTLs_cvs_statistics[c("inboot")][is.na(eQTLs_cvs_statistics[c("inboot")])] <- "no"
+```
+
+#### get results after clumping
+
+How many significant cis associations remain?
+```{r}
+nrow(bme_eqtl_cvs_clumped)
+```
+
+How many unique SNPs do we have?
+```{r}
+unique_snp_names_eqtl_cvs_boot_clumped <- unique(bme_eqtl_cvs_clumped$eSNPs)
+length(unique_snp_names_eqtl_cvs_boot_clumped)
+```
+
+How many unqiue genes do we have?
+```{r}
+unique_gene_names_eqtl_cvs_boot_clumped <- unique(bme_eqtl_cvs_clumped$eGene)
+length(unique_gene_names_eqtl_cvs_boot_clumped)
+```
+
+
+*add inidcator if association in combined MatrixEQTL and BootstrapQTL Data is also in clumped results*
+```{r}
+bme_eqtl_cvs_clumped <- bme_eqtl_cvs_clumped[,-c(3,4, 11:22)]
+bme_eqtl_cvs_clumped$inclumped <- "yes"
+```
+
+```{r}
+eQTLs_cvs_statistics <- merge(eQTLs_cvs_statistics, bme_eqtl_cvs_clumped, all = T)
+eQTLs_cvs_statistics[c("inclumped")][is.na(eQTLs_cvs_statistics[c("inclumped")])] <- "no"
+```
+
+*add geno and gene info*
+```{r}
+eQTLs_cvs_statistics <- merge(eQTLs_cvs_statistics, genotypes, by.x="eSNPs", by.y="snp_name")
+eQTLs_cvs_statistics <- merge(eQTLs_cvs_statistics, genes_cvs, by.x="eGene", by.y="ENSEMBL")
+```
+
+```{r}
+eQTLs_cvs_statistics$eaf <- round(eQTLs_cvs_statistics$eaf, 2)
+eQTLs_cvs_statistics$maf <- round(eQTLs_cvs_statistics$maf, 2)
+```
+
+### ODDs
+```{r}
+total_number_tests_cvs <- me_eqtl_cvs$cis$ntests
+number_positive_cvs <- nrow(bme_eqtl_cvs)
+```
+
+### export full eQTL cvs statistic table
+```{r, warning = F}
+#write.csv(eQTLs_cvs_statistics, file = here("Analyses/Results/Descriptive", "eQTLs_cvs_statistics.csv"), row.names = FALSE, col.names = T)
+save(eQTLs_cvs_statistics, file = here("Analyses/Results/Descriptive", "eQTLs_cvs_statistics.Rdata"))
+```
+
+How is the median effect size and r2?
+```{r}
+final_associations_eqtl_cvs_clumped <- eQTLs_cvs_statistics[eQTLs_cvs_statistics$inclumped == "yes", ]
+summary(final_associations_eqtl_cvs_clumped$corrected_beta)
+summary(final_associations_eqtl_cvs_clumped$r2)
+```
+
+### histogram plot
+```{r}
+hits_df_eqtls_cvs <- data.frame(c(nrow(statistics_me_eqtl_cvs_cis_fdr5), length(unique_snp_names_eqtl_cvs_fdr5_matrix), length(unique_gene_names_eqtl_cvs_fdr5_matrix)), c(nrow(bme_eqtl_cvs), length(unique_snp_names_eqtl_cvs_boot), length(unique_gene_names_eqtl_cvs_boot)), c(nrow(bme_eqtl_cvs_clumped), length(unique_snp_names_eqtl_cvs_boot_clumped), length(unique_gene_names_eqtl_cvs_boot_clumped)))
+
+rownames(hits_df_eqtls_cvs) <- c("cis eQTLs", "unique SNPs", "unique Genes")
+colnames(hits_df_eqtls_cvs) <- c("MatrixEQTL", "BootstrapQTL", "clumped") 
+
+hits_df_eqtls_cvs <- hits_df_eqtls_cvs %>% as.matrix() %>% reshape2::melt(varnames = c("number", "method"), value.name = "cnt")
+```
+
+```{r}
+save(hits_df_eqtls_cvs, file = here("02_Data/MatrixEQTL_Output", "hits_df_eqtls_cvs.Rdata"))
+```
+
+```{r}
+barplot_counts_function(hits_df_eqtls_cvs, "CVS", "clumped", colors_cvs_3levels, ylimits=c(0,136000))
+```
+
+# amount associaitons
+
+```{r}
+number_positive_placenta / total_number_tests_placenta
+number_positive_cvs / total_number_tests_cvs
+```
+
+in placenta, 0.25% of total tests were significant, in cvs 0.02% (10x more in placenta).
+
+# intersection snp-gene pairs
+```{r}
+common_snp_gene_placenta_cvs <- merge(eQTLs_placenta_statistics[eQTLs_placenta_statistics$inclumped == "yes", ], eQTLs_cvs_statistics[eQTLs_cvs_statistics$inclumped == "yes", ], by = c("eSNPs", "eGene"))
+colnames(common_snp_gene_placenta_cvs) <- gsub('.x', '.placenta', colnames(common_snp_gene_placenta_cvs))
+colnames(common_snp_gene_placenta_cvs) <- gsub('.y', '.cvs', colnames(common_snp_gene_placenta_cvs))
+```
+
+```{r}
+common_snp_gene_placenta_cvs
+```
+2 common snp-gene pairs in cvs and placenta
+
+```{r}
+save(common_snp_gene_placenta_cvs, file = here("02_Data/CVS_Placenta/", "common_snp_gene_placenta_cvs.Rdata"))
+```
+
+
+
